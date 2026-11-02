@@ -366,3 +366,22 @@ fn wait_and_commit_are_independent_flags() {
     assert!(help.contains("-w, --wait"), "help: {help}");
     assert!(help.contains("-c, --commit"), "help: {help}");
 }
+
+#[test]
+#[ignore]
+fn wait_has_a_watch_alias() {
+    // The flag was renamed; keep the old spelling working.
+    let repo = Repo::new("wait-alias");
+    repo.write("a.txt", "x\n");
+    let out = Command::new(cmg_bin())
+        .arg("--watch")
+        .current_dir(&repo.dir)
+        .env_remove("CMG_CONFIG")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("interactive terminal"),
+        "alias should reach wait mode, got: {err}"
+    );
+}

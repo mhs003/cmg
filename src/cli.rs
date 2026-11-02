@@ -71,7 +71,7 @@ pub struct Cli {
 
     /// Wait mode: review the message, then commit, regenerate, or revise it
     /// with your feedback. Requires a terminal.
-    #[arg(short = 'w', long)]
+    #[arg(short = 'w', long, alias = "watch")]
     pub wait: bool,
 }
 

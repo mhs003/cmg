@@ -54,7 +54,10 @@ but untracked files exist, diff them against `/dev/null` (`git::untracked_diff`)
 so they still produce a message; empty files fall back to a name-only list.
 `--commit` stages everything first when the target was not already staged.
 
-## Wait mode (`-w`)
+## Wait mode (`-w`, `--wait`)
+
+`--watch` is kept as an alias for the old name; do not remove it without a
+release note.
 
 An interactive review loop, and the only part that is allowed to hold the
 terminal. Rules that keep it from becoming a TUI:
