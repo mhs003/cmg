@@ -10,7 +10,7 @@
 use std::io::{self, BufRead, Write};
 
 use anyhow::{bail, Context, Result};
-use crossterm::cursor::MoveUp;
+use crossterm::cursor::{Hide, MoveDown, MoveToColumn, RestorePosition, SavePosition, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::queue;
 use crossterm::style::{Attribute, Print, ResetColor, SetAttribute};
@@ -74,14 +74,16 @@ fn menu() -> Result<Choice> {
     let mut selected = 0usize;
     let mut stderr = io::stderr();
 
-    // Line wrapping in scrollback would garble the redraw, so mask it off.
+    // Line wrapping would garble a redraw that exceeds the width, so mask it
+    // off for the duration and restore it afterwards.
     enable_raw_mode().context("enabling raw mode (is stderr a terminal?)")?;
-    let _ = queue!(stderr, DisableLineWrap);
     let result = (|| -> Result<Choice> {
+        queue!(stderr, DisableLineWrap)?;
+        // Saved before the first frame, restored on every redraw: counting
+        // MoveUp() lines drifts because the cursor ends up mid-line.
+        queue!(stderr, SavePosition, Hide)?;
         loop {
-            // Redraw the whole menu each frame; it is tiny, and clearing up
-            // from the cursor avoids counting lines.
-            queue!(stderr, Clear(ClearType::FromCursorDown))?;
+            queue!(stderr, RestorePosition, Clear(ClearType::FromCursorDown))?;
             for (i, (label, _)) in OPTIONS.iter().enumerate() {
                 if i == selected {
                     queue!(
@@ -121,16 +123,19 @@ fn menu() -> Result<Choice> {
             };
 
             if let Some(c) = choice {
-                queue!(stderr, Clear(ClearType::FromCursorDown))?;
+                // Leave the cursor on the line below the cleared menu so later
+                // output does not overwrite the message above it.
+                queue!(stderr, RestorePosition, Clear(ClearType::FromCursorDown))?;
+                let lines = OPTIONS.len() + 1;
+                queue!(stderr, MoveDown(lines as u16), MoveToColumn(0))?;
+                queue!(stderr, Show)?;
                 return Ok(c);
             }
-            // Back to the first menu line for the next frame.
-            queue!(stderr, MoveUp((OPTIONS.len() + 1) as u16))?;
         }
     })();
 
     let _ = disable_raw_mode();
-    let _ = queue!(stderr, crossterm::terminal::EnableLineWrap);
+    let _ = queue!(stderr, crossterm::terminal::EnableLineWrap, Show);
     let _ = stderr.flush();
     result
 }
