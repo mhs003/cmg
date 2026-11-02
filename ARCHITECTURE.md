@@ -48,6 +48,11 @@ key is a load-time error, so we never make an unauthenticated request.
 non-empty, that is the target; otherwise unstaged changes are used. In a
 repository with no commits, the index is compared against git's empty tree.
 
+If there are no tracked changes but untracked files exist, each is diffed
+against `/dev/null` with `--no-index` (exit code 1 there just means "differs"),
+giving a normal `new file` patch. Files that are empty produce no hunks, so a
+plain name list is sent instead. `--path` filters apply to these files too.
+
 Lockfiles and generated files (`Cargo.lock`, `*.min.js`, `dist/`, …) are
 excluded via pathspecs (`:(exclude)…`) unless `diff.ignore_lockfiles` is false.
 User `--path` filters and the exclusions share a single `--` pathspec list.
@@ -102,4 +107,5 @@ are not a problem.
 - No token counting; truncation is byte-based.
 - `--commit` commits everything staged, so a partially selected index is
   respected only when you use the default staged target.
-- Untracked files must be added with `git add` before they can appear in a diff.
+- Untracked files are only used when nothing tracked has changed; once there is
+  a tracked diff they are ignored (stage them to include them).

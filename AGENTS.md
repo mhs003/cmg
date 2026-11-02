@@ -48,8 +48,9 @@ Without an explicit flag the rule is: **if anything is staged, diff the staged
 changes; otherwise diff unstaged changes.** This is implemented in
 `resolve_target`. Explicit `--staged`, `--unstaged`, and `--all` always win.
 
-Untracked files are not part of `git diff`. When the only changes are
-untracked, tell the user to `git add` them instead of sending an empty diff.
+Untracked files are not part of `git diff`. When there are no tracked changes
+but untracked files exist, diff them against `/dev/null` (`git::untracked_diff`)
+so they still produce a message; empty files fall back to a name-only list.
 `--commit` stages everything first when the target was not already staged.
 
 ## Style

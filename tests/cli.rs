@@ -229,17 +229,81 @@ fn commit_flag_stages_unstaged_edits() {
 
 #[test]
 #[ignore]
-fn untracked_only_is_explained() {
-    let (url, _seen) = stub_server(OK_RESPONSE);
+fn untracked_only_generates_message() {
+    let (url, seen) = stub_server(OK_RESPONSE);
     let repo = Repo::new("untracked");
-    repo.write("new.txt", "x\n");
+    repo.write("new.txt", "hello untracked\n");
     let cfg = repo.write_config(&url);
 
     let out = repo.run(&["--config", cfg.to_str().unwrap()]);
-    assert!(!out.status.success());
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("untracked"), "stderr: {err}");
-    assert!(err.contains("new.txt"));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "feat: add greeter\n");
+
+    let body = seen.lock().unwrap();
+    assert!(body.contains("new.txt"), "prompt lacks the file name");
+    assert!(
+        body.contains("+hello untracked"),
+        "prompt lacks the content"
+    );
+}
+
+#[test]
+#[ignore]
+fn untracked_empty_files_still_list_names() {
+    let (url, seen) = stub_server(OK_RESPONSE);
+    let repo = Repo::new("untracked-empty");
+    repo.write("placeholder", "");
+    let cfg = repo.write_config(&url);
+
+    let out = repo.run(&["--config", cfg.to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(seen.lock().unwrap().contains("placeholder"));
+}
+
+#[test]
+#[ignore]
+fn untracked_commit_stages_and_commits() {
+    let (url, _seen) = stub_server(OK_RESPONSE);
+    let repo = Repo::new("untracked-commit");
+    repo.write("new.txt", "x\n");
+    let cfg = repo.write_config(&url);
+
+    let out = repo.run(&["--commit", "--config", cfg.to_str().unwrap()]);
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        repo.git(&["log", "-1", "--pretty=%s"]).trim(),
+        "feat: add greeter"
+    );
+    assert_eq!(repo.git(&["status", "--porcelain"]).trim(), "");
+}
+
+#[test]
+#[ignore]
+fn untracked_respects_path_filter() {
+    let (url, seen) = stub_server(OK_RESPONSE);
+    let repo = Repo::new("untracked-path");
+    repo.write("keep/a.txt", "a\n");
+    repo.write("skip/b.txt", "b\n");
+    let cfg = repo.write_config(&url);
+
+    let out = repo.run(&["--path", "keep", "--config", cfg.to_str().unwrap()]);
+    assert!(out.status.success());
+
+    let body = seen.lock().unwrap();
+    assert!(body.contains("keep/a.txt"));
+    assert!(!body.contains("skip/b.txt"));
 }
 
 #[test]

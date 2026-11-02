@@ -9,16 +9,63 @@ use anyhow::{bail, Context, Result};
 
 /// Run git with `args` and return stdout as a String.
 fn git(args: &[&str]) -> Result<String> {
-    let out = Command::new("git")
-        .args(args)
-        .stdin(Stdio::null())
-        .output()
-        .context("running git (is it installed?)")?;
+    let out = run(args)?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         bail!("git {} failed: {}", args.join(" "), err.trim());
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+fn run(args: &[&str]) -> Result<std::process::Output> {
+    Command::new("git")
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .context("running git (is it installed?)")
+}
+
+/// Diff an untracked file against `/dev/null`, giving a normal `new file`
+/// patch. `--no-index` exits 1 when the files differ, which is the normal
+/// case here, so a non-empty stdout is what matters.
+fn diff_untracked_file(path: &str) -> String {
+    let out = match run(&[
+        "diff",
+        "--no-index",
+        "--no-color",
+        "--no-ext-diff",
+        "--",
+        "/dev/null",
+        path,
+    ]) {
+        Ok(o) => o,
+        Err(_) => return String::new(),
+    };
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Combined diff for untracked files. Content patches where possible (empty
+/// files produce no hunks), plus a path list when nothing textual was
+/// produced, so the model still knows what was added.
+pub fn untracked_diff(files: &[String]) -> String {
+    let mut out = String::new();
+    for f in files {
+        let d = diff_untracked_file(f);
+        // Rewrite the `1/` and `2/` prefixes `--no-index` adds.
+        let d = d
+            .replace("diff --git 1/", "diff --git a/")
+            .replace(" 2/", " b/");
+        out.push_str(&d);
+    }
+    if out.is_empty() && !files.is_empty() {
+        out.push_str("New files (contents empty):\n");
+        for f in files {
+            out.push_str("  ");
+            out.push_str(f);
+            out.push('\n');
+        }
+    }
+    out
 }
 
 /// True when the process is inside a work tree.
@@ -56,13 +103,6 @@ pub fn untracked() -> Vec<String> {
     git(&["ls-files", "--others", "--exclude-standard"])
         .map(|s| s.lines().map(|l| l.to_string()).collect())
         .unwrap_or_default()
-}
-
-/// True when anything tracked is staged or modified.
-pub fn has_tracked_changes() -> bool {
-    git(&["status", "--porcelain", "--untracked-files=no"])
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false)
 }
 
 /// Recent commit subjects, used as style reference for the model.

@@ -89,32 +89,38 @@ fn run(cli: &Cli) -> Result<()> {
         Err(e) => return Err(e),
     };
     if diff.trim().is_empty() {
-        if !git::has_tracked_changes() {
-            // Everything left is untracked, and untracked files cannot be
-            // committed or diffed until they are added.
-            let untracked = git::untracked();
-            if !untracked.is_empty() {
-                let mut msg = format!(
-                    "no tracked changes; {}untracked file{}: {}",
-                    if untracked.len() == 1 { "1 " } else { "" },
-                    if untracked.len() == 1 { "" } else { "s" },
-                    untracked
-                        .iter()
-                        .take(5)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", ")
+        // Nothing tracked changed, but untracked files are still work the user
+        // may want a message for: diff them against /dev/null.
+        let untracked: Vec<String> = git::untracked()
+            .into_iter()
+            .filter(|f| path_matches(f, &cli.paths))
+            .collect();
+        if !untracked.is_empty() {
+            if cli.verbose {
+                eprintln!(
+                    "cmg: no tracked changes; diffing {} untracked file(s)",
+                    untracked.len()
                 );
-                if untracked.len() > 5 {
-                    msg.push_str(&format!(", and {} more", untracked.len() - 5));
-                }
-                msg.push_str("\n  stage them with `git add <file>` and run cmg again");
-                bail!("{msg}");
+            }
+            let untracked_diff = git::untracked_diff(&untracked);
+            if !untracked_diff.trim().is_empty() {
+                return generate(cli, &cfg, &cfg_path, target, untracked_diff);
             }
         }
         bail!("{}", empty_message(target, cli));
     }
 
+    generate(cli, &cfg, &cfg_path, target, diff)
+}
+
+/// Everything after we have a diff: truncate, prompt, call, print or commit.
+fn generate(
+    cli: &Cli,
+    cfg: &Config,
+    cfg_path: &std::path::Path,
+    target: TargetMode,
+    diff: String,
+) -> Result<()> {
     let (diff, truncated) = prompt::truncate(&diff, cfg.diff.max_chars);
     if truncated {
         eprintln!(
@@ -303,6 +309,15 @@ fn root_commit_args(cfg: &DiffConfig, cli: &Cli) -> Vec<String> {
         }
     }
     args
+}
+
+/// True for an untracked file when no `--path` filters were given, else when
+/// it lives under (or is) one of them.
+fn path_matches(file: &str, paths: &[String]) -> bool {
+    paths.is_empty()
+        || paths
+            .iter()
+            .any(|p| file == p || file.starts_with(&format!("{}/", p.trim_end_matches('/'))))
 }
 
 fn empty_message(target: TargetMode, cli: &Cli) -> String {
