@@ -135,6 +135,12 @@ from Conventional Commits since the last tag, updates `VERSION`,
 binaries for Linux (glibc and static musl), Termux (Android, via the NDK),
 macOS (Intel and Apple Silicon), and Windows.
 
+Releasability is decided per push: only `feat`, `fix`, `perf`, `refactor`,
+`revert`, or breaking changes (any type followed by `!`, or a
+`BREAKING CHANGE` footer) produce a release. Docs-, chore-, CI- and test-only
+pushes build nothing and tag nothing; the pipeline stops after the `version`
+job with `released=false`.
+
 Each target is packaged as `cmg-<tag>-<target>.tar.gz` (zip on Windows) with a
 `.sha256` file. The GitHub release body is the matching `CHANGELOG.md`
 section, so notes are always in sync with the tag.

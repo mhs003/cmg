@@ -82,13 +82,25 @@ Releases are automatic. **Every push to `master`** runs
 `.github/workflows/release.yml`, which:
 
 1. Reads the current version from `VERSION` (the single source of truth).
-2. Scans Conventional Commits since the last `v*` tag and bumps the version:
-   `feat`/breaking → minor, otherwise patch. A push containing only
-   `docs`/`chore`/`ci`/`test`/`style` commits releases nothing.
+2. Scans Conventional Commits since the last `v*` tag and bumps the version
+   (see the table below).
 3. Prepends a section to `CHANGELOG.md`, updates `VERSION` and the version in
    `Cargo.toml`, then commits `chore(release): vX.Y.Z`, tags it, and pushes.
 4. Builds the binary matrix and publishes a GitHub release whose body is that
    changelog section.
+
+Which commits cut a release:
+
+| Commit | Effect |
+| --- | --- |
+| `feat` | minor bump |
+| any type with `!`, or a `BREAKING CHANGE` footer | minor bump (so `docs!:` counts) |
+| `fix`, `perf`, `refactor`, `revert` | patch bump |
+| `docs`, `chore`, `ci`, `test`, `style`, `build` | **no release** on their own; listed under "Other" if another commit triggers one |
+| not Conventional at all (`updated the readme`) | **no release**, and no changelog entry |
+
+A docs-only push therefore bumps nothing, tags nothing and publishes nothing:
+the workflow stops cleanly after the `version` job with `released=false`.
 
 Notes:
 
