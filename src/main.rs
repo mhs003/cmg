@@ -10,8 +10,9 @@ mod git;
 mod llm;
 mod postprocess;
 mod prompt;
+mod watch;
 
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::process::ExitCode;
 
 use anyhow::{bail, Context, Result};
@@ -69,6 +70,10 @@ fn run(cli: &Cli) -> Result<()> {
     }
     if let Some(u) = &cli.base_url {
         cfg.provider.base_url = u.clone();
+    }
+
+    if cli.watch && !(io::stdin().is_terminal() && io::stderr().is_terminal()) {
+        bail!("--watch needs an interactive terminal (stdin and stderr)");
     }
 
     if !git::is_repo() {
@@ -174,31 +179,86 @@ fn generate(
         );
     }
 
-    let started = std::time::Instant::now();
-    let raw = client
-        .complete(&system, &user)
-        .context("generating commit message")?;
-    let elapsed = started.elapsed();
+    let history = vec![
+        llm::ChatMessage::new("system", &system),
+        llm::ChatMessage::new("user", &user),
+    ];
 
-    let messages = build_messages(&raw, cli);
+    if cli.watch {
+        return watch_loop(cli, &client, target, history);
+    }
+
+    let messages = build_messages(&request(&client, &history, cli)?, cli);
     let first = messages
         .first()
         .cloned()
         .context("model returned no usable message")?;
-
-    if cli.verbose {
-        eprintln!(
-            "cmg: got {} message(s) in {:.1}s",
-            messages.len(),
-            elapsed.as_secs_f64()
-        );
-    }
 
     if cli.commit {
         return do_commit(target, &first, messages.len());
     }
 
     write_messages(&messages)
+}
+
+/// One request, with the usual timing diagnostics.
+fn request(client: &llm::Client, history: &[llm::ChatMessage], cli: &Cli) -> Result<String> {
+    let started = std::time::Instant::now();
+    let raw = client.chat(history).context("generating commit message")?;
+    if cli.verbose {
+        eprintln!("cmg: response in {:.1}s", started.elapsed().as_secs_f64());
+    }
+    Ok(raw)
+}
+
+/// Review loop for `-w`: show the message, then commit, regenerate, revise
+/// with feedback, or cancel. Prompts go to stderr; only a committed message
+/// ever reaches stdout.
+fn watch_loop(
+    cli: &Cli,
+    client: &llm::Client,
+    target: TargetMode,
+    mut history: Vec<llm::ChatMessage>,
+) -> Result<()> {
+    // Track the length so "generate another" can drop the previous exchange
+    // while "feedback" keeps it.
+    let base = history.len();
+
+    let response = request(client, &history, cli)?;
+    let mut current = first_message(&response, cli)?;
+
+    loop {
+        match watch::review(&current)? {
+            watch::Outcome::Commit => {
+                return do_commit(target, &current, 1);
+            }
+            watch::Outcome::Cancel => {
+                // Still print the rejected message so it can be copied or
+                // piped; the commit itself was explicitly declined.
+                return write_messages(&[current]);
+            }
+            watch::Outcome::Regenerate => {
+                history.truncate(base);
+                let response = request(client, &history, cli)?;
+                current = first_message(&response, cli)?;
+            }
+            watch::Outcome::Feedback(text) => {
+                // Keep every turn so repeated feedback keeps refining the same
+                // message instead of starting over.
+                history.push(llm::ChatMessage::new("assistant", &current));
+                history.push(llm::ChatMessage::new("user", &prompt::revision(&text)));
+                let response = request(client, &history, cli)?;
+                current = first_message(&response, cli)?;
+            }
+        }
+    }
+}
+
+fn first_message(raw: &str, cli: &Cli) -> Result<String> {
+    build_messages(raw, cli)
+        .into_iter()
+        .next()
+        .context("model returned no usable message")
 }
 
 /// Clean and de-duplicate the model output.

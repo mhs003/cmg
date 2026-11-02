@@ -341,3 +341,28 @@ fn root_commit_works() {
     );
     assert!(seen.lock().unwrap().contains("+hi"));
 }
+
+#[test]
+#[ignore]
+fn watch_refuses_without_a_terminal() {
+    let (url, _seen) = stub_server(OK_RESPONSE);
+    let repo = Repo::new("watch-notty");
+    repo.write("a.txt", "x\n");
+    repo.git(&["add", "a.txt"]);
+    let cfg = repo.write_config(&url);
+
+    // Tests run with piped stdio, which is exactly the case we reject.
+    let out = repo.run(&["-w", "--config", cfg.to_str().unwrap()]);
+    assert!(!out.status.success());
+    assert!(out.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("interactive terminal"));
+}
+
+#[test]
+#[ignore]
+fn watch_and_commit_are_independent_flags() {
+    let out = Command::new(cmg_bin()).arg("--help").output().unwrap();
+    let help = String::from_utf8_lossy(&out.stdout);
+    assert!(help.contains("-w, --watch"), "help: {help}");
+    assert!(help.contains("-c, --commit"), "help: {help}");
+}

@@ -97,6 +97,17 @@ pub fn user(input: &PromptInput<'_>, log: &[String]) -> String {
     out
 }
 
+/// Follow-up turn when the user asks for a revision in watch mode. The
+/// previous message stays in the history so repeated feedback keeps refining
+/// the same message rather than starting over.
+pub fn revision(feedback: &str) -> String {
+    format!(
+        "Revise your previous commit message according to this feedback and output only the \
+         revised message, following the same rules as before.\n\nFeedback: {}\n",
+        feedback.trim()
+    )
+}
+
 /// Cut a diff to `max` bytes on a line boundary, returning `(text, truncated)`.
 pub fn truncate(diff: &str, max: usize) -> (String, bool) {
     if diff.len() <= max {
@@ -119,6 +130,13 @@ mod tests {
 
     fn cfg() -> PromptConfig {
         PromptConfig::default()
+    }
+
+    #[test]
+    fn revision_embeds_feedback() {
+        let r = revision("  use fix type  ");
+        assert!(r.contains("Feedback: use fix type"));
+        assert!(r.contains("previous commit message"));
     }
 
     #[test]

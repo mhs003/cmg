@@ -68,6 +68,11 @@ pub struct Cli {
     /// Create the commit with the generated message.
     #[arg(short = 'c', long)]
     pub commit: bool,
+
+    /// Watch mode: review the message, then commit, regenerate, or revise it
+    /// with your feedback. Requires a terminal.
+    #[arg(short = 'w', long)]
+    pub watch: bool,
 }
 
 impl Cli {

@@ -21,6 +21,7 @@ There is no state between runs, no cache, no background process.
 | `src/prompt.rs` | System rules + user message (recent log, hint, diff). Diff size truncation. |
 | `src/llm.rs` | `POST {base_url}/chat/completions` via `ureq`. Splits multi-message responses. |
 | `src/postprocess.rs` | Strips markdown fences and conversational preambles from model output. |
+| `src/watch.rs` | Interactive `-w` review loop: arrow-key menu (raw mode) and feedback input. |
 
 ## Data flow
 
@@ -87,12 +88,36 @@ Multiple messages print subject lines only, one per line, so they pipe into
 pipes the message to `git commit --file -` so multi-line bodies and argv limits
 are not a problem.
 
+## Watch mode
+
+`cmg -w` generates a message and then opens a review loop instead of exiting:
+
+```
+message ──▶ [ commit | generate another | feedback | cancel ]
+```
+
+- **commit** — same path as `--commit`, including staging when needed.
+- **generate another** — drops any feedback turns and re-requests from the
+  original system + diff messages.
+- **feedback** — reads a line, appends `assistant` (the current message) and
+  `user` (`prompt::revision(feedback)`) to the history, and re-requests. The
+  turns accumulate, so repeated feedback refines one message rather than
+  restarting.
+- **cancel** (also Esc, Ctrl-C, `q`, or empty feedback) — prints the rejected
+  message to stdout and exits 0 without committing.
+
+The client therefore exposes `chat(&[ChatMessage])`; `complete` is just the
+two-message case. The loop is refused unless stdin and stderr are both TTYs,
+because raw mode there would otherwise eat piped input.
+
 ## Design decisions
 
 - **Git subprocess over libgit2.** Zero native build dependencies, smaller
   binaries, and diffs that match what the user sees in `git diff`.
-- **No async.** One request per run does not justify a runtime; `ureq` with
-  rustls keeps the dependency tree and startup time small.
+- **No async.** One request per run (more only in `-w`) does not justify a
+  runtime; `ureq` with rustls keeps the dependency tree and startup time small.
+- **crossterm only for the `-w` menu.** It brings raw mode and key events
+  without pulling in a full TUI framework; every other path does not touch it.
 - **OpenAI-compatible only (v1).** One request/response shape covers OpenAI,
   OpenRouter, Groq, vLLM, LM Studio, and Ollama's `/v1`. Other provider shapes
   can be added later behind a config discriminator if there is demand.

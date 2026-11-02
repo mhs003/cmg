@@ -37,6 +37,7 @@ src/git.rs          git subprocess helpers
 src/prompt.rs       prompt construction and diff truncation
 src/llm.rs          OpenAI-compatible HTTP client
 src/postprocess.rs  fence/preamble stripping of model output
+src/watch.rs        `-w` review loop: arrow-key menu, feedback input
 tests/cli.rs        end-to-end tests against a local stub HTTP server
 ```
 
@@ -52,6 +53,19 @@ Untracked files are not part of `git diff`. When there are no tracked changes
 but untracked files exist, diff them against `/dev/null` (`git::untracked_diff`)
 so they still produce a message; empty files fall back to a name-only list.
 `--commit` stages everything first when the target was not already staged.
+
+## Watch mode (`-w`)
+
+An interactive review loop, and the only part that is allowed to hold the
+terminal. Rules that keep it from becoming a TUI:
+
+- Requires a TTY on both stdin and stderr; refuse with an error otherwise.
+- Raw mode is enabled only for the menu and always restored, even on error.
+- Prompts, the rendered message, and the menu go to **stderr**. stdout still
+  receives only the message (the accepted one, or the rejected one on cancel).
+- `feedback` keeps the conversation history (`llm::ChatMessage`), so repeated
+  feedback refines the same message; `generate another` truncates back to the
+  original diff turn.
 
 ## Style
 

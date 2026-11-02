@@ -20,15 +20,26 @@ pub struct Client {
 #[derive(Serialize)]
 struct ChatRequest<'a> {
     model: &'a str,
-    messages: Vec<Msg<'a>>,
+    messages: Vec<&'a ChatMessage>,
     temperature: f32,
     stream: bool,
 }
 
-#[derive(Serialize)]
-struct Msg<'a> {
-    role: &'a str,
-    content: &'a str,
+/// One turn of a conversation. Owned so the interactive feedback loop can
+/// keep the whole history between requests.
+#[derive(Debug, Clone, Serialize)]
+pub struct ChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+impl ChatMessage {
+    pub fn new(role: &str, content: &str) -> Self {
+        Self {
+            role: role.to_string(),
+            content: content.to_string(),
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -78,19 +89,11 @@ impl Client {
         &self.model
     }
 
-    pub fn complete(&self, system: &str, user: &str) -> Result<String> {
+    /// Send an existing conversation (system + user + assistant + user …).
+    pub fn chat(&self, history: &[ChatMessage]) -> Result<String> {
         let body = ChatRequest {
             model: &self.model,
-            messages: vec![
-                Msg {
-                    role: "system",
-                    content: system,
-                },
-                Msg {
-                    role: "user",
-                    content: user,
-                },
-            ],
+            messages: history.iter().collect(),
             temperature: 0.3,
             stream: false,
         };
