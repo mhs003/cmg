@@ -8,6 +8,13 @@ Entries are generated from Conventional Commits when a release is cut.
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-02
+
+### Fixed
+
+- **ci:** check out before downloading release assets
+
+
 ## [0.2.1] - 2026-11-02
 
 ### Fixed
