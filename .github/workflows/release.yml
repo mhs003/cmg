@@ -288,14 +288,16 @@ jobs:
     needs: [version, build]
     runs-on: ubuntu-latest
     steps:
+      # Checkout first: it cleans the workspace, which would delete artifacts
+      # downloaded before it.
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
-
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ needs.version.outputs.tag }}
 
       - name: List assets
         run: ls -la artifacts
