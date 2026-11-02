@@ -10,7 +10,7 @@ mod git;
 mod llm;
 mod postprocess;
 mod prompt;
-mod watch;
+mod wait;
 
 use std::io::{self, IsTerminal, Write};
 use std::process::ExitCode;
@@ -72,8 +72,8 @@ fn run(cli: &Cli) -> Result<()> {
         cfg.provider.base_url = u.clone();
     }
 
-    if cli.watch && !(io::stdin().is_terminal() && io::stderr().is_terminal()) {
-        bail!("--watch needs an interactive terminal (stdin and stderr)");
+    if cli.wait && !(io::stdin().is_terminal() && io::stderr().is_terminal()) {
+        bail!("--wait needs an interactive terminal (stdin and stderr)");
     }
 
     if !git::is_repo() {
@@ -184,8 +184,8 @@ fn generate(
         llm::ChatMessage::new("user", &user),
     ];
 
-    if cli.watch {
-        return watch_loop(cli, &client, target, history);
+    if cli.wait {
+        return wait_loop(cli, &client, target, history);
     }
 
     let messages = build_messages(&request(&client, &history, cli)?, cli);
@@ -214,7 +214,7 @@ fn request(client: &llm::Client, history: &[llm::ChatMessage], cli: &Cli) -> Res
 /// Review loop for `-w`: show the message, then commit, regenerate, revise
 /// with feedback, or cancel. Prompts go to stderr; only a committed message
 /// ever reaches stdout.
-fn watch_loop(
+fn wait_loop(
     cli: &Cli,
     client: &llm::Client,
     target: TargetMode,
@@ -228,21 +228,21 @@ fn watch_loop(
     let mut current = first_message(&response, cli)?;
 
     loop {
-        match watch::review(&current)? {
-            watch::Outcome::Commit => {
+        match wait::review(&current)? {
+            wait::Outcome::Commit => {
                 return do_commit(target, &current, 1);
             }
-            watch::Outcome::Cancel => {
+            wait::Outcome::Cancel => {
                 // Still print the rejected message so it can be copied or
                 // piped; the commit itself was explicitly declined.
                 return write_messages(&[current]);
             }
-            watch::Outcome::Regenerate => {
+            wait::Outcome::Regenerate => {
                 history.truncate(base);
                 let response = request(client, &history, cli)?;
                 current = first_message(&response, cli)?;
             }
-            watch::Outcome::Feedback(text) => {
+            wait::Outcome::Feedback(text) => {
                 // Keep every turn so repeated feedback keeps refining the same
                 // message instead of starting over.
                 history.push(llm::ChatMessage::new("assistant", &current));

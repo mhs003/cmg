@@ -69,10 +69,10 @@ pub struct Cli {
     #[arg(short = 'c', long)]
     pub commit: bool,
 
-    /// Watch mode: review the message, then commit, regenerate, or revise it
+    /// Wait mode: review the message, then commit, regenerate, or revise it
     /// with your feedback. Requires a terminal.
     #[arg(short = 'w', long)]
-    pub watch: bool,
+    pub wait: bool,
 }
 
 impl Cli {

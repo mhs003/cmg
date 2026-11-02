@@ -2,7 +2,7 @@
 //!
 //! Everything here talks to stderr: the rendered message, the menu, and the
 //! feedback prompt. stdout stays reserved for the final commit message so the
-//! "stdout is a contract" rule in AGENTS.md still holds even in watch mode.
+//! "stdout is a contract" rule in AGENTS.md still holds even in wait mode.
 //!
 //! The menu uses arrow keys (raw mode); feedback is a plain line read so it
 //! behaves like any other terminal input, including backspace and Ctrl-C.
@@ -47,7 +47,9 @@ pub enum Outcome {
 /// input.
 pub fn review(message: &str) -> Result<Outcome> {
     let mut stderr = io::stderr();
-    writeln!(stderr, "\n{}", indent(message))?;
+    // Blank line before the message separates it from the shell prompt, and
+    // one after keeps the menu from crowding the message.
+    writeln!(stderr, "\n{}\n", indent(message))?;
     stderr.flush()?;
 
     match menu()? {
@@ -85,8 +87,8 @@ fn menu() -> Result<Choice> {
     let result = (|| -> Result<Choice> {
         queue!(stderr, Hide)?;
         loop {
-            //  returns to column 0, then wipe the line: no state carried
-            // over between frames.
+            // A carriage return goes back to column 0, then the line is wiped:
+            // no state is carried over between frames.
             queue!(stderr, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
             for (i, (label, _)) in OPTIONS.iter().enumerate() {
                 if i > 0 {

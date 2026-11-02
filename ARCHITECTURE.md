@@ -21,7 +21,7 @@ There is no state between runs, no cache, no background process.
 | `src/prompt.rs` | System rules + user message (recent log, hint, diff). Diff size truncation. |
 | `src/llm.rs` | `POST {base_url}/chat/completions` via `ureq`. Splits multi-message responses. |
 | `src/postprocess.rs` | Strips markdown fences and conversational preambles from model output. |
-| `src/watch.rs` | Interactive `-w` review loop: arrow-key menu (raw mode) and feedback input. |
+| `src/wait.rs` | Interactive `-w` review loop: arrow-key menu (raw mode) and feedback input. |
 
 ## Data flow
 
@@ -88,7 +88,7 @@ Multiple messages print subject lines only, one per line, so they pipe into
 pipes the message to `git commit --file -` so multi-line bodies and argv limits
 are not a problem.
 
-## Watch mode
+## Wait mode
 
 `cmg -w` generates a message and then opens a review loop instead of exiting:
 

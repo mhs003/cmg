@@ -344,9 +344,9 @@ fn root_commit_works() {
 
 #[test]
 #[ignore]
-fn watch_refuses_without_a_terminal() {
+fn wait_refuses_without_a_terminal() {
     let (url, _seen) = stub_server(OK_RESPONSE);
-    let repo = Repo::new("watch-notty");
+    let repo = Repo::new("wait-notty");
     repo.write("a.txt", "x\n");
     repo.git(&["add", "a.txt"]);
     let cfg = repo.write_config(&url);
@@ -360,9 +360,9 @@ fn watch_refuses_without_a_terminal() {
 
 #[test]
 #[ignore]
-fn watch_and_commit_are_independent_flags() {
+fn wait_and_commit_are_independent_flags() {
     let out = Command::new(cmg_bin()).arg("--help").output().unwrap();
     let help = String::from_utf8_lossy(&out.stdout);
-    assert!(help.contains("-w, --watch"), "help: {help}");
+    assert!(help.contains("-w, --wait"), "help: {help}");
     assert!(help.contains("-c, --commit"), "help: {help}");
 }

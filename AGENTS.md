@@ -37,7 +37,7 @@ src/git.rs          git subprocess helpers
 src/prompt.rs       prompt construction and diff truncation
 src/llm.rs          OpenAI-compatible HTTP client
 src/postprocess.rs  fence/preamble stripping of model output
-src/watch.rs        `-w` review loop: arrow-key menu, feedback input
+src/wait.rs         `-w` review loop: arrow-key menu, feedback input
 tests/cli.rs        end-to-end tests against a local stub HTTP server
 ```
 
@@ -54,7 +54,7 @@ but untracked files exist, diff them against `/dev/null` (`git::untracked_diff`)
 so they still produce a message; empty files fall back to a name-only list.
 `--commit` stages everything first when the target was not already staged.
 
-## Watch mode (`-w`)
+## Wait mode (`-w`)
 
 An interactive review loop, and the only part that is allowed to hold the
 terminal. Rules that keep it from becoming a TUI:
