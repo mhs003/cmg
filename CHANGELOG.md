@@ -8,6 +8,13 @@ Entries are generated from Conventional Commits when a release is cut.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-02
+
+### Added
+
+- **wait:** give the review loop a readable transcript
+
+
 ## [0.3.0] - 2026-11-02
 
 ### Added
