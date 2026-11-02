@@ -128,10 +128,16 @@ because raw mode there would otherwise eat piped input.
 
 ## Distribution
 
-CI builds release binaries for Linux (glibc and static musl), Termux
-(Android, via the NDK), macOS (Intel and Apple Silicon), and Windows. Each
-target is packaged as `cmg-<tag>-<target>.tar.gz` (zip on Windows) with a
-`.sha256` file and published as release assets on `v*` tags.
+`VERSION` is the source of truth for the version; `Cargo.toml` mirrors it and
+a test enforces that. On every push to `master`, CI derives the next version
+from Conventional Commits since the last tag, updates `VERSION`,
+`CHANGELOG.md`, and `Cargo.toml`, commits and tags the result, then builds
+binaries for Linux (glibc and static musl), Termux (Android, via the NDK),
+macOS (Intel and Apple Silicon), and Windows.
+
+Each target is packaged as `cmg-<tag>-<target>.tar.gz` (zip on Windows) with a
+`.sha256` file. The GitHub release body is the matching `CHANGELOG.md`
+section, so notes are always in sync with the tag.
 
 ## Known limitations
 

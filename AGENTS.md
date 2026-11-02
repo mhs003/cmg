@@ -78,15 +78,37 @@ terminal. Rules that keep it from becoming a TUI:
 
 ## Releases
 
-`.github/workflows/release.yml` builds a binary matrix on `v*` tags and
-attaches archives + `.sha256` sums to a GitHub release. Notes:
+Releases are automatic. **Every push to `master`** runs
+`.github/workflows/release.yml`, which:
 
+1. Reads the current version from `VERSION` (the single source of truth).
+2. Scans Conventional Commits since the last `v*` tag and bumps the version:
+   `feat`/breaking → minor, otherwise patch. A push containing only
+   `docs`/`chore`/`ci`/`test`/`style` commits releases nothing.
+3. Prepends a section to `CHANGELOG.md`, updates `VERSION` and the version in
+   `Cargo.toml`, then commits `chore(release): vX.Y.Z`, tags it, and pushes.
+4. Builds the binary matrix and publishes a GitHub release whose body is that
+   changelog section.
+
+Notes:
+
+- `VERSION` and `Cargo.toml` must agree; `tests/meta.rs` enforces it.
+- Never hand-edit a released changelog section; add entries by committing, not
+  by editing history.
+- Commit subjects are user-facing: they become changelog entries. Write them
+  accordingly (`fix(menu): stop drift`, not `fix stuff`).
+- `chore(release):` commits are skipped, which stops the bot's own push from
+  triggering another release.
 - **Termux is Android.** Use the `*-linux-android` targets with the NDK
   linker; glibc or musl Linux binaries do not run under Termux.
 - `ring` (via rustls) contains C and assembly, so every cross target needs a
-  matching linker. Keep the `.cargo/config.toml` setup in the workflow.
+  matching linker.
 - New targets go in the matrix with the right `bin`/`zip`/linker knobs; do not
   hard-code runner paths such as a specific NDK version.
+
+Helper: `scripts/release-notes.sh <current> <range>` does step 2–3 locally
+(exit 3 = nothing to release). Point it at scratch files with `VERSION_FILE` /
+`CHANGELOG_FILE` to try it safely.
 
 ## Testing
 
