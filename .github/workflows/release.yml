@@ -221,7 +221,11 @@ jobs:
             echo "using CC=${clang}"
           fi
 
-          cat "$cfg"
+          if [ -s "$cfg" ]; then
+            echo "--- $cfg"; cat "$cfg"
+          else
+            echo "no cross-linker overrides for ${{ matrix.target }}"
+          fi
 
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} --locked
