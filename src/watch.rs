@@ -10,11 +10,11 @@
 use std::io::{self, BufRead, Write};
 
 use anyhow::{bail, Context, Result};
-use crossterm::cursor::{Hide, MoveDown, MoveToColumn, RestorePosition, SavePosition, Show};
+use crossterm::cursor::{self, Hide, MoveTo, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::queue;
 use crossterm::style::{Attribute, Print, ResetColor, SetAttribute};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, DisableLineWrap};
+use crossterm::terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Choice {
@@ -70,6 +70,12 @@ fn indent(message: &str) -> String {
 }
 
 /// Arrow-key menu. Returns the chosen option, or `Cancel` on Esc/Ctrl-C.
+///
+/// The menu is drawn relative to a fixed anchor computed once, and every
+/// redraw moves to that anchor with an absolute cursor move. Relative moves
+/// (`MoveUp`) and saved positions are avoided on purpose: both misbehave once
+/// a line has wrapped or scrolled, which made the block crawl across the
+/// screen.
 fn menu() -> Result<Choice> {
     let mut selected = 0usize;
     let mut stderr = io::stderr();
@@ -78,12 +84,28 @@ fn menu() -> Result<Choice> {
     // off for the duration and restore it afterwards.
     enable_raw_mode().context("enabling raw mode (is stderr a terminal?)")?;
     let result = (|| -> Result<Choice> {
-        queue!(stderr, DisableLineWrap)?;
-        // Saved before the first frame, restored on every redraw: counting
-        // MoveUp() lines drifts because the cursor ends up mid-line.
-        queue!(stderr, SavePosition, Hide)?;
+        let (_, mut row) = position()?;
+        let (_, rows) = terminal::size()?;
+
+        // If the menu would run past the bottom edge, scroll first so every
+        // frame starts at a position that still exists on screen.
+        let height = (OPTIONS.len() + 1) as u16;
+        if row + height >= rows {
+            let scroll = row + height - rows + 1;
+            queue!(stderr, Print("\n".repeat(scroll as usize)))?;
+            row = rows.saturating_sub(height);
+            stderr.flush()?;
+        }
+        let anchor_row = row;
+
+        queue!(stderr, Hide)?;
         loop {
-            queue!(stderr, RestorePosition, Clear(ClearType::FromCursorDown))?;
+            // Top of the block, column 0, wiping everything below it.
+            queue!(
+                stderr,
+                MoveTo(0, anchor_row),
+                Clear(ClearType::FromCursorDown)
+            )?;
             for (i, (label, _)) in OPTIONS.iter().enumerate() {
                 if i == selected {
                     queue!(
@@ -123,21 +145,36 @@ fn menu() -> Result<Choice> {
             };
 
             if let Some(c) = choice {
-                // Leave the cursor on the line below the cleared menu so later
-                // output does not overwrite the message above it.
-                queue!(stderr, RestorePosition, Clear(ClearType::FromCursorDown))?;
-                let lines = OPTIONS.len() + 1;
-                queue!(stderr, MoveDown(lines as u16), MoveToColumn(0))?;
-                queue!(stderr, Show)?;
+                // Drop the menu and leave the cursor on a clean line below it,
+                // so following output does not overwrite the message above.
+                queue!(
+                    stderr,
+                    MoveTo(0, anchor_row),
+                    Clear(ClearType::FromCursorDown),
+                    MoveTo(0, anchor_row),
+                    Show
+                )?;
                 return Ok(c);
             }
         }
     })();
 
     let _ = disable_raw_mode();
-    let _ = queue!(stderr, crossterm::terminal::EnableLineWrap, Show);
+    let _ = queue!(stderr, terminal::EnableLineWrap, Show);
     let _ = stderr.flush();
     result
+}
+
+/// Cursor position and terminal size, falling back to sane values when the
+/// terminal does not answer (some multiplexers and CI terminals do not).
+fn position() -> Result<(u16, u16)> {
+    match cursor::position() {
+        Ok(p) => Ok(p),
+        Err(_) => {
+            let (_cols, rows) = terminal::size().unwrap_or((80, 24));
+            Ok((0, rows.saturating_sub(OPTIONS.len() as u16 + 2)))
+        }
+    }
 }
 
 /// Read one line of feedback. Empty input means "no change", which we treat
