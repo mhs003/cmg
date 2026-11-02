@@ -8,6 +8,19 @@ Entries are generated from Conventional Commits when a release is cut.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-02
+
+### Added
+
+- **cli:** keep --watch as an alias for --wait
+- **wait:** separate the menu from the message with a blank line
+
+### Other
+
+- spell out which commits cut a release
+- record the CI failures we hit and their shape
+
+
 ## [0.2.2] - 2026-11-02
 
 ### Fixed
