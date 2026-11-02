@@ -108,8 +108,14 @@ Notes:
   `armv7a-...`. Export `CC_<target_with_underscores>` and `AR_<...>` as well.
 - Packaging must be portable: `sha256sum` is GNU-only (macOS has `shasum`,
   Windows has `certutil`), and `7z` is not on every runner (`zip` is).
-- `set -euo pipefail` plus a missing tool is the usual cause of a
-  "Process completed with exit code 1" on an otherwise fine build.
+- `set -euo pipefail` plus a missing file/tool is the usual cause of a
+  "Process completed with exit code 1" on an otherwise fine build. Native
+  targets take no configure branch, so anything that reads a generated file
+  must first check it exists.
+- `actions/checkout` cleans the workspace. In the publish job it must run
+  **before** `download-artifact`, or the downloaded assets are deleted.
+- Read the job graph first when triaging: a leg that failed in a setup step
+  never reached the build, and its "exit code 1" says nothing about compilation.
 - New targets go in the matrix with the right `bin`/`zip`/linker knobs; do not
   hard-code runner paths such as a specific NDK version.
 
