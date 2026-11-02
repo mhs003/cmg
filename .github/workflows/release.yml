@@ -1,0 +1,196 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  # Manual run: builds the matrix without publishing unless `publish` is set.
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Also create a release (requires a v* tag to exist)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # --- Linux, glibc ---------------------------------------------
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            bin: cmg
+
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            bin: cmg
+            cross_gnu: true
+
+          # --- Linux, static musl ---------------------------------------
+          # Portable binaries that also run as-is on Alpine and older hosts.
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            bin: cmg
+            musl_x86: true
+
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            bin: cmg
+            cross_gnu: true
+
+          # --- Termux (Android) -----------------------------------------
+          # Termux is Android, not glibc Linux: musl/gnu binaries will not
+          # run under Termux. These link against the Android NDK's libc.
+          - target: aarch64-linux-android
+            os: ubuntu-latest
+            bin: cmg
+            android_linker: aarch64-linux-android21-clang
+
+          - target: x86_64-linux-android
+            os: ubuntu-latest
+            bin: cmg
+            android_linker: x86_64-linux-android21-clang
+
+          - target: armv7-linux-androideabi
+            os: ubuntu-latest
+            bin: cmg
+            android_linker: armv7a-linux-androideabi21-clang
+
+          # --- macOS -----------------------------------------------------
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            bin: cmg
+
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            bin: cmg
+
+          # --- Windows ---------------------------------------------------
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            bin: cmg.exe
+            zip: true
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Configure .cargo/config.toml
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .cargo
+          cfg=.cargo/config.toml
+
+          if [ "${{ matrix.cross_gnu }}" = "true" ]; then
+            # glibc cross builds need the matching linker and sysroot libs;
+            # apt's cross packages are the least surprising route.
+            sudo apt-get update -qq
+            if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+              sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+              printf '[target.aarch64-unknown-linux-gnu]\nlinker = "aarch64-linux-gnu-gcc"\n' >> "$cfg"
+            else
+              # aarch64 musl: rustc's bundled self-contained linker handles
+              # musl, but the C toolchain is still needed for ring's asm.
+              sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+              printf '[target.aarch64-unknown-linux-musl]\nlinker = "aarch64-linux-gnu-gcc"\n' >> "$cfg"
+            fi
+          fi
+
+          if [ "${{ matrix.musl_x86 }}" = "true" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq musl-tools
+            printf '[target.x86_64-unknown-linux-musl]\nlinker = "musl-gcc"\n' >> "$cfg"
+          fi
+
+          if [ -n "${{ matrix.android_linker }}" ]; then
+            # The runner image ships the NDK; the version dir is discovered
+            # rather than hard-coded so image updates do not break the build.
+            ndk=$(ls -d "$ANDROID_NDK_HOME" "$ANDROID_NDK_LATEST_HOME" \
+                    /usr/local/lib/android/sdk/ndk/* 2>/dev/null | tail -1)
+            linker="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.android_linker }}"
+            test -x "$linker" || { echo "no Android linker at $linker"; exit 1; }
+            printf '[target.${{ matrix.target }}]\nlinker = "%s"\n' "$linker" >> "$cfg"
+            echo "ANDROID_NDK_HOME=$ndk" >> "$GITHUB_ENV"
+          fi
+
+          cat "$cfg"
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} --locked
+
+      - name: Package
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}"
+          name="cmg-${tag}-${{ matrix.target }}"
+          bin="${{ matrix.bin }}"
+
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/$bin" dist/
+
+          cd dist
+          if [ "${{ matrix.zip }}" = "true" ]; then
+            archive="$name.zip"
+            7z a -tzip "../$archive" "$bin" >/dev/null
+          else
+            archive="$name.tar.gz"
+            tar czf "../$archive" "$bin"
+          fi
+          cd ..
+          sha256sum "$archive" > "$archive.sha256"
+          echo "built $archive"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            cmg-*.tar.gz
+            cmg-*.tar.gz.sha256
+            cmg-*.zip
+            cmg-*.zip.sha256
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || github.event.inputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List assets
+        run: ls -la artifacts
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('cmg-{0}', github.run_number) }}
+          name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || format('cmg build {0}', github.run_number) }}
+          generate_release_notes: true
+          files: |
+            artifacts/cmg-*.tar.gz
+            artifacts/cmg-*.tar.gz.sha256
+            artifacts/cmg-*.zip
+            artifacts/cmg-*.zip.sha256

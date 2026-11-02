@@ -126,6 +126,13 @@ because raw mode there would otherwise eat piped input.
   usable in `git commit -m "$(cmg)"`.
 - **stdout is machine-readable.** All human-facing chatter is on stderr.
 
+## Distribution
+
+CI builds release binaries for Linux (glibc and static musl), Termux
+(Android, via the NDK), macOS (Intel and Apple Silicon), and Windows. Each
+target is packaged as `cmg-<tag>-<target>.tar.gz` (zip on Windows) with a
+`.sha256` file and published as release assets on `v*` tags.
+
 ## Known limitations
 
 - No streaming, so a slow model shows no progress (use `--verbose` for timings).

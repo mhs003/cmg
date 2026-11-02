@@ -76,6 +76,18 @@ terminal. Rules that keep it from becoming a TUI:
   implementation.
 - Comments explain *why*, not *what*. Keep them short.
 
+## Releases
+
+`.github/workflows/release.yml` builds a binary matrix on `v*` tags and
+attaches archives + `.sha256` sums to a GitHub release. Notes:
+
+- **Termux is Android.** Use the `*-linux-android` targets with the NDK
+  linker; glibc or musl Linux binaries do not run under Termux.
+- `ring` (via rustls) contains C and assembly, so every cross target needs a
+  matching linker. Keep the `.cargo/config.toml` setup in the workflow.
+- New targets go in the matrix with the right `bin`/`zip`/linker knobs; do not
+  hard-code runner paths such as a specific NDK version.
+
 ## Testing
 
 ```sh
