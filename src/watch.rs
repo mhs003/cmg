@@ -10,11 +10,11 @@
 use std::io::{self, BufRead, Write};
 
 use anyhow::{bail, Context, Result};
-use crossterm::cursor::{self, Hide, MoveTo, Show};
+use crossterm::cursor::{Hide, MoveToColumn, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::queue;
 use crossterm::style::{Attribute, Print, ResetColor, SetAttribute};
-use crossterm::terminal::{self, disable_raw_mode, enable_raw_mode, Clear, ClearType};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Choice {
@@ -71,66 +71,55 @@ fn indent(message: &str) -> String {
 
 /// Arrow-key menu. Returns the chosen option, or `Cancel` on Esc/Ctrl-C.
 ///
-/// The menu is drawn relative to a fixed anchor computed once, and every
-/// redraw moves to that anchor with an absolute cursor move. Relative moves
-/// (`MoveUp`) and saved positions are avoided on purpose: both misbehave once
-/// a line has wrapped or scrolled, which made the block crawl across the
-/// screen.
+/// The menu is a single line, redrawn in place with `\r` + clear-line. That
+/// is deliberately the dumbest possible redraw: it needs no cursor query, no
+/// saved position, no line counting and no absolute coordinates, so it cannot
+/// drift when a line wraps, the screen scrolls, or the terminal misreports
+/// where the cursor is. Earlier versions used relative moves and
+/// SavePosition/RestorePosition and crawled across the screen.
 fn menu() -> Result<Choice> {
     let mut selected = 0usize;
     let mut stderr = io::stderr();
 
-    // Line wrapping would garble a redraw that exceeds the width, so mask it
-    // off for the duration and restore it afterwards.
     enable_raw_mode().context("enabling raw mode (is stderr a terminal?)")?;
     let result = (|| -> Result<Choice> {
-        let (_, mut row) = position()?;
-        let (_, rows) = terminal::size()?;
-
-        // If the menu would run past the bottom edge, scroll first so every
-        // frame starts at a position that still exists on screen.
-        let height = (OPTIONS.len() + 1) as u16;
-        if row + height >= rows {
-            let scroll = row + height - rows + 1;
-            queue!(stderr, Print("\n".repeat(scroll as usize)))?;
-            row = rows.saturating_sub(height);
-            stderr.flush()?;
-        }
-        let anchor_row = row;
-
         queue!(stderr, Hide)?;
         loop {
-            // Top of the block, column 0, wiping everything below it.
-            queue!(
-                stderr,
-                MoveTo(0, anchor_row),
-                Clear(ClearType::FromCursorDown)
-            )?;
+            //  returns to column 0, then wipe the line: no state carried
+            // over between frames.
+            queue!(stderr, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
             for (i, (label, _)) in OPTIONS.iter().enumerate() {
+                if i > 0 {
+                    queue!(stderr, Print("  "))?;
+                }
                 if i == selected {
                     queue!(
                         stderr,
                         SetAttribute(Attribute::Reverse),
-                        Print(format!(" > {label}")),
+                        Print(format!(" {label} ")),
                         ResetColor,
                         SetAttribute(Attribute::Reset)
                     )?;
                 } else {
-                    queue!(stderr, Print(format!("   {label}")))?;
+                    queue!(stderr, Print(label))?;
                 }
-                queue!(stderr, Print("\n"))?;
             }
-            queue!(stderr, Print(" (arrows/enter, esc to cancel)"))?;
+            queue!(stderr, Print("   (arrows, enter, esc)"))?;
             stderr.flush()?;
 
             let choice = match event::read()? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => {
                     match (key.code, key.modifiers) {
-                        (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
+                        (KeyCode::Left, _)
+                        | (KeyCode::Up, _)
+                        | (KeyCode::Char('k'), KeyModifiers::NONE) => {
                             selected = selected.checked_sub(1).unwrap_or(OPTIONS.len() - 1);
                             None
                         }
-                        (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
+                        (KeyCode::Right, _)
+                        | (KeyCode::Down, _)
+                        | (KeyCode::Tab, _)
+                        | (KeyCode::Char('j'), KeyModifiers::NONE) => {
                             selected = (selected + 1) % OPTIONS.len();
                             None
                         }
@@ -145,13 +134,12 @@ fn menu() -> Result<Choice> {
             };
 
             if let Some(c) = choice {
-                // Drop the menu and leave the cursor on a clean line below it,
-                // so following output does not overwrite the message above.
+                // Erase the menu and start a fresh line below it.
                 queue!(
                     stderr,
-                    MoveTo(0, anchor_row),
-                    Clear(ClearType::FromCursorDown),
-                    MoveTo(0, anchor_row),
+                    MoveToColumn(0),
+                    Clear(ClearType::CurrentLine),
+                    Print("\n"),
                     Show
                 )?;
                 return Ok(c);
@@ -160,21 +148,9 @@ fn menu() -> Result<Choice> {
     })();
 
     let _ = disable_raw_mode();
-    let _ = queue!(stderr, terminal::EnableLineWrap, Show);
+    let _ = queue!(stderr, Show);
     let _ = stderr.flush();
     result
-}
-
-/// Cursor position and terminal size, falling back to sane values when the
-/// terminal does not answer (some multiplexers and CI terminals do not).
-fn position() -> Result<(u16, u16)> {
-    match cursor::position() {
-        Ok(p) => Ok(p),
-        Err(_) => {
-            let (_cols, rows) = terminal::size().unwrap_or((80, 24));
-            Ok((0, rows.saturating_sub(OPTIONS.len() as u16 + 2)))
-        }
-    }
 }
 
 /// Read one line of feedback. Empty input means "no change", which we treat
