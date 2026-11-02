@@ -4,16 +4,20 @@
 //! feedback prompt. stdout stays reserved for the final commit message so the
 //! "stdout is a contract" rule in AGENTS.md still holds even in wait mode.
 //!
-//! The menu uses arrow keys (raw mode); feedback is a plain line read so it
-//! behaves like any other terminal input, including backspace and Ctrl-C.
+//! Presentation rules, so this stays a CLI and not a TUI:
+//! - No box drawing, no alternate screen, no full-screen repaint. The
+//!   transcript scrolls away like ordinary command output.
+//! - Colour is decorative only. Every distinction is also visible without it
+//!   (labels, indentation, bold), and `NO_COLOR` / `TERM=dumb` turn it off.
+//! - Only the menu uses raw mode, and only for as long as it is on screen.
 
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
 
 use anyhow::{bail, Context, Result};
 use crossterm::cursor::{Hide, MoveToColumn, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::queue;
-use crossterm::style::{Attribute, Print, ResetColor, SetAttribute};
+use crossterm::style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,45 +45,128 @@ pub enum Outcome {
     Feedback(String),
 }
 
+/// Whether to emit colour. Honours the usual conventions: `NO_COLOR`, a
+/// dumb terminal, or a non-terminal stderr all mean plain text.
+pub fn color_enabled() -> bool {
+    std::env::var_os("NO_COLOR").is_none()
+        && std::env::var("TERM").map(|t| t != "dumb").unwrap_or(true)
+        && io::stderr().is_terminal()
+}
+
 /// Show `message`, ask how to proceed, and read feedback if asked for.
 ///
 /// Only call this when stderr is a terminal; otherwise it would consume piped
 /// input.
 pub fn review(message: &str) -> Result<Outcome> {
     let mut stderr = io::stderr();
-    // Blank line before the message separates it from the shell prompt, and
-    // one after keeps the menu from crowding the message.
-    writeln!(stderr, "\n{}\n", indent(message))?;
+    let color = color_enabled();
+
+    writeln!(stderr)?;
+    render_turn(&mut stderr, "suggested", message, color)?;
+    writeln!(stderr)?;
     stderr.flush()?;
 
-    match menu()? {
+    match menu(color)? {
         Choice::Commit => Ok(Outcome::Commit),
         Choice::Cancel => Ok(Outcome::Cancel),
         Choice::Regenerate => Ok(Outcome::Regenerate),
-        Choice::Feedback => match read_feedback()? {
+        Choice::Feedback => match read_feedback(color)? {
+            // No echo here: the terminal already showed the line the user
+            // typed next to the prompt.
             Some(text) => Ok(Outcome::Feedback(text)),
             None => Ok(Outcome::Cancel),
         },
     }
 }
 
-fn indent(message: &str) -> String {
-    message
-        .lines()
-        .map(|l| format!("  {l}"))
-        .collect::<Vec<_>>()
-        .join("\n")
+/// Render one message block: a labelled gutter, then the text indented under
+/// it. The label is what carries the meaning; colour just reinforces it.
+fn render_turn(out: &mut impl Write, label: &str, body: &str, color: bool) -> Result<()> {
+    let mut lines = body.lines();
+    let first = lines.next().unwrap_or("");
+
+    write!(out, "  ")?;
+    if color {
+        queue!(
+            out,
+            SetForegroundColor(if label == "you" {
+                Color::DarkCyan
+            } else {
+                Color::DarkGrey
+            })
+        )?;
+    }
+    write!(out, "{label}")?;
+    if color {
+        queue!(out, ResetColor)?;
+    }
+    writeln!(out)?;
+
+    // Blank line between the label and a multi-line body so a long message
+    // does not turn into an unreadable block.
+    if body.lines().count() > 1 {
+        writeln!(out)?;
+    }
+
+    write_commit_line(out, first, true, color)?;
+    for line in lines {
+        // Preserve blank lines inside the body, and keep bullet indentation.
+        write_commit_line(out, line, false, color)?;
+    }
+    Ok(())
+}
+
+/// Write one line of a commit message, styling only the Conventional Commits
+/// prefix when present. Keeping the subject on one line is intentional: the
+/// message is meant to be pasted verbatim, so we never reflow it.
+fn write_commit_line(
+    out: &mut impl Write,
+    line: &str,
+    is_subject: bool,
+    color: bool,
+) -> Result<()> {
+    if !is_subject {
+        writeln!(out, "    {line}")?;
+        return Ok(());
+    }
+
+    match split_prefix(line) {
+        Some((prefix, rest)) if color => {
+            // type(scope)!:  in bold, scope in a muted colour, rest plain.
+            writeln!(out, "  ")?;
+            let _ = queue!(out, SetAttribute(Attribute::Bold));
+            write!(out, "    {prefix}")?;
+            let _ = queue!(out, SetAttribute(Attribute::Reset));
+            writeln!(out, "{rest}")?;
+        }
+        _ => writeln!(out, "    {line}")?,
+    }
+    Ok(())
+}
+
+/// Split `type(scope)!: rest` into the styled prefix and the remainder.
+/// Returns `None` for anything that is not a Conventional Commits subject.
+fn split_prefix(line: &str) -> Option<(String, &str)> {
+    let colon = line.find(": ")?;
+    let head = &line[..colon + 1];
+    let body = &line[colon + 1..];
+
+    let type_end = head.find(['(', '!', ':'])?;
+    let ty = &head[..type_end];
+    if ty.is_empty() || !ty.chars().all(|c| c.is_ascii_lowercase()) {
+        return None;
+    }
+    Some((head.to_string(), body))
 }
 
 /// Arrow-key menu. Returns the chosen option, or `Cancel` on Esc/Ctrl-C.
 ///
-/// The menu is a single line, redrawn in place with `\r` + clear-line. That
-/// is deliberately the dumbest possible redraw: it needs no cursor query, no
-/// saved position, no line counting and no absolute coordinates, so it cannot
-/// drift when a line wraps, the screen scrolls, or the terminal misreports
-/// where the cursor is. Earlier versions used relative moves and
-/// SavePosition/RestorePosition and crawled across the screen.
-fn menu() -> Result<Choice> {
+/// The menu is a single line, redrawn in place with a carriage return plus a
+/// clear-line. That is deliberately the dumbest possible redraw: it needs no
+/// cursor query, no saved position, no line counting and no absolute
+/// coordinates, so it cannot drift when a line wraps, the screen scrolls, or
+/// the terminal misreports where the cursor is.
+fn menu(color: bool) -> Result<Choice> {
     let mut selected = 0usize;
     let mut stderr = io::stderr();
 
@@ -90,23 +177,44 @@ fn menu() -> Result<Choice> {
             // A carriage return goes back to column 0, then the line is wiped:
             // no state is carried over between frames.
             queue!(stderr, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
+
+            // A short left margin keeps the menu aligned with the transcript.
+            queue!(stderr, Print("  "))?;
             for (i, (label, _)) in OPTIONS.iter().enumerate() {
                 if i > 0 {
-                    queue!(stderr, Print("  "))?;
+                    queue!(stderr, Print("   "))?;
                 }
                 if i == selected {
-                    queue!(
-                        stderr,
-                        SetAttribute(Attribute::Reverse),
-                        Print(format!(" {label} ")),
-                        ResetColor,
-                        SetAttribute(Attribute::Reset)
-                    )?;
+                    if color {
+                        queue!(
+                            stderr,
+                            SetAttribute(Attribute::Reverse),
+                            SetForegroundColor(Color::White),
+                            Print(format!(" {label} ")),
+                            ResetColor,
+                            SetAttribute(Attribute::Reset)
+                        )?;
+                    } else {
+                        // Without colour the selection must still be visible.
+                        queue!(
+                            stderr,
+                            SetAttribute(Attribute::Reverse),
+                            Print(format!(" {label} ")),
+                            SetAttribute(Attribute::Reset)
+                        )?;
+                    }
                 } else {
-                    queue!(stderr, Print(label))?;
+                    queue!(stderr, Print(format!(" {label} ")))?;
                 }
             }
-            queue!(stderr, Print("   (arrows, enter, esc)"))?;
+
+            if color {
+                queue!(stderr, SetForegroundColor(Color::DarkGrey))?;
+            }
+            queue!(stderr, Print("  arrows, enter, esc"))?;
+            if color {
+                queue!(stderr, ResetColor)?;
+            }
             stderr.flush()?;
 
             let choice = match event::read()? {
@@ -126,6 +234,10 @@ fn menu() -> Result<Choice> {
                             None
                         }
                         (KeyCode::Enter, _) => Some(OPTIONS[selected].1),
+                        // First letters select directly; vim keys move.
+                        (KeyCode::Char('c'), KeyModifiers::NONE) => Some(Choice::Commit),
+                        (KeyCode::Char('g'), KeyModifiers::NONE) => Some(Choice::Regenerate),
+                        (KeyCode::Char('f'), KeyModifiers::NONE) => Some(Choice::Feedback),
                         (KeyCode::Esc, _) => Some(Choice::Cancel),
                         (KeyCode::Char('c'), KeyModifiers::CONTROL) => Some(Choice::Cancel),
                         (KeyCode::Char('q'), KeyModifiers::NONE) => Some(Choice::Cancel),
@@ -157,9 +269,16 @@ fn menu() -> Result<Choice> {
 
 /// Read one line of feedback. Empty input means "no change", which we treat
 /// as a cancel so the caller does not burn a request.
-fn read_feedback() -> Result<Option<String>> {
+fn read_feedback(color: bool) -> Result<Option<String>> {
     let mut stderr = io::stderr();
-    write!(stderr, "feedback (empty to cancel): ")?;
+    if color {
+        queue!(stderr, SetForegroundColor(Color::DarkCyan))?;
+    }
+    write!(stderr, "  you ›")?;
+    if color {
+        queue!(stderr, ResetColor)?;
+    }
+    write!(stderr, " ")?;
     stderr.flush()?;
 
     let mut line = String::new();
@@ -189,7 +308,28 @@ mod tests {
     }
 
     #[test]
-    fn indent_prefixes_every_line() {
-        assert_eq!(indent("a\nb"), "  a\n  b");
+    fn conventional_prefix_is_split() {
+        assert_eq!(
+            split_prefix("feat(blog): add page").map(|(p, r)| (p, r.to_string())),
+            Some(("feat(blog):".to_string(), " add page".to_string()))
+        );
+        assert!(split_prefix("fix!: drop x").is_some());
+    }
+
+    #[test]
+    fn non_conventional_subjects_are_left_alone() {
+        assert!(split_prefix("updated the readme").is_none());
+        assert!(split_prefix("Fix stuff: later").is_none());
+        assert!(split_prefix("no colon here").is_none());
+    }
+
+    #[test]
+    fn plain_rendering_has_no_escape_codes() {
+        let mut buf = Vec::new();
+        render_turn(&mut buf, "suggested", "feat: x\n\nbody", false).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(!s.contains('\u{1b}'), "plain output leaked escapes: {s:?}");
+        assert!(s.contains("suggested"));
+        assert!(s.contains("feat: x"));
     }
 }

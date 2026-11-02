@@ -66,6 +66,12 @@ terminal. Rules that keep it from becoming a TUI:
 - Raw mode is enabled only for the menu and always restored, even on error.
 - Prompts, the rendered message, and the menu go to **stderr**. stdout still
   receives only the message (the accepted one, or the rejected one on cancel).
+- Presentation is transcript-style: a labelled turn (`suggested` / `you ›`),
+  never a box, an alternate screen, or a full repaint.
+- Colour is decorative. Every state is also legible without it, and
+  `NO_COLOR` / `TERM=dumb` / non-TTY stderr emit no colour at all
+  (`tests` in `src/wait.rs` assert the plain path has no escape codes).
+- Single-letter keys (`c`, `g`, `f`, `q`) act on the menu; `j`/`k` move.
 - `feedback` keeps the conversation history (`llm::ChatMessage`), so repeated
   feedback refines the same message; `generate another` truncates back to the
   original diff turn.
