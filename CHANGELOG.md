@@ -8,6 +8,14 @@ Entries are generated from Conventional Commits when a release is cut.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-02
+
+### Fixed
+
+- **ci:** do not fail native targets in the configure step
+- **ci:** give ring a C compiler and make packaging portable
+
+
 ## [0.2.0] - 2026-11-02
 
 ### Added
