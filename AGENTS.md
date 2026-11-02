@@ -101,8 +101,15 @@ Notes:
   triggering another release.
 - **Termux is Android.** Use the `*-linux-android` targets with the NDK
   linker; glibc or musl Linux binaries do not run under Termux.
-- `ring` (via rustls) contains C and assembly, so every cross target needs a
-  matching linker.
+- `ring` (via rustls) contains C and assembly. Setting cargo's `linker` is
+  **not enough**: `cc-rs` also needs a C compiler and picks its name from the
+  target triple. For `armv7-linux-androideabi` that name
+  (`arm-linux-androideabi-clang`) does not exist in the NDK, which ships
+  `armv7a-...`. Export `CC_<target_with_underscores>` and `AR_<...>` as well.
+- Packaging must be portable: `sha256sum` is GNU-only (macOS has `shasum`,
+  Windows has `certutil`), and `7z` is not on every runner (`zip` is).
+- `set -euo pipefail` plus a missing tool is the usual cause of a
+  "Process completed with exit code 1" on an otherwise fine build.
 - New targets go in the matrix with the right `bin`/`zip`/linker knobs; do not
   hard-code runner paths such as a specific NDK version.
 

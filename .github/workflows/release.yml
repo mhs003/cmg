@@ -26,7 +26,7 @@ jobs:
       tag: ${{ steps.bump.outputs.tag }}
       released: ${{ steps.bump.outputs.released }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Need full history to walk back to the last tag, and a token that
           # can push tags.
@@ -159,7 +159,7 @@ jobs:
             zip: true
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.version.outputs.tag }}
 
@@ -171,6 +171,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+          # A cache miss or restore error must never fail a release.
+          save-if: ${{ github.ref == 'refs/heads/master' }}
 
       - name: Configure cross linker
         shell: bash
@@ -197,9 +199,26 @@ jobs:
             # updates do not break this leg.
             ndk=$(ls -d "${ANDROID_NDK_HOME:-}" "${ANDROID_NDK_LATEST_HOME:-}" \
                     /usr/local/lib/android/sdk/ndk/* 2>/dev/null | tail -1)
-            linker="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/${{ matrix.android_linker }}"
-            test -x "$linker" || { echo "no Android linker at $linker" >&2; exit 1; }
-            printf '[target.%s]\nlinker = "%s"\n' "${{ matrix.target }}" "$linker" >> "$cfg"
+            bin="$ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+            target="${{ matrix.target }}"
+            clang="$bin/${{ matrix.android_linker }}"
+            test -x "$clang" || { echo "no Android clang at $clang" >&2; exit 1; }
+
+            printf '[target.%s]\nlinker = "%s"\n' "$target" "$clang" >> "$cfg"
+
+            # Setting the cargo linker is not enough: ring builds C and needs
+            # cc-rs to find a compiler too. cc-rs derives the name from the
+            # triple, which for armv7 is arm-linux-androideabi-clang -- a name
+            # the NDK does not ship (it ships armv7a-...). Point it explicitly.
+            # Env var names must use underscores in the target.
+            key=$(printf '%s' "$target" | tr '-' '_')
+            {
+              echo "CC_${key}=${clang}"
+              echo "AR_${key}=${bin}/llvm-ar"
+              echo "CARGO_TARGET_$(printf '%s' "$target" | tr 'a-z-' 'A-Z_')_LINKER=${clang}"
+            } >> "$GITHUB_ENV"
+
+            echo "using CC=${clang}"
           fi
 
           cat "$cfg"
@@ -211,6 +230,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          echo "runner: ${RUNNER_OS} ${RUNNER_ARCH}"
+          echo "toolchain:"
+          for t in sha256sum shasum certutil 7z zip tar; do
+            if command -v "$t" >/dev/null 2>&1; then echo "  $t: $(command -v "$t")"; else echo "  $t: missing"; fi
+          done
           tag="${{ needs.version.outputs.tag }}"
           name="cmg-${tag}-${{ matrix.target }}"
           bin="${{ matrix.bin }}"
@@ -221,13 +245,28 @@ jobs:
           cd dist
           if [ "${{ matrix.zip }}" = "true" ]; then
             archive="$name.zip"
-            7z a -tzip "../$archive" "$bin" >/dev/null
+            if command -v 7z >/dev/null 2>&1; then
+              7z a -tzip "../$archive" "$bin" >/dev/null
+            else
+              zip -q "../$archive" "$bin"
+            fi
           else
             archive="$name.tar.gz"
             tar czf "../$archive" "$bin"
           fi
           cd ..
-          sha256sum "$archive" > "$archive.sha256"
+
+          # sha256sum is GNU-only (absent on macOS); certutil on Windows.
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$archive" > "$archive.sha256"
+          elif command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 "$archive" > "$archive.sha256"
+          else
+            certutil -hashfile "$archive" SHA256 \
+              | sed -n '2p' | tr -d ' \r' | awk -v f="$archive" '{ print $1"  "f }' \
+              > "$archive.sha256"
+          fi
+          cat "$archive.sha256"
           echo "built $archive"
 
       - name: Upload artifact
@@ -250,7 +289,7 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.version.outputs.tag }}
 
