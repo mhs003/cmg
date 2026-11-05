@@ -8,6 +8,15 @@ Entries are generated from Conventional Commits when a release is cut.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-05
+
+### Fixed
+
+- **wait:** exit 1 when the user cancels
+- **wait:** return to the menu when feedback is cancelled
+- **wait:** give the feedback prompt real line editing
+
+
 ## [0.6.0] - 2026-11-05
 
 ### Added
