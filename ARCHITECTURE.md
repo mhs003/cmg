@@ -89,7 +89,7 @@ Multiple messages print subject lines only, one per line, so they pipe into
 pipes the message to `git commit --file -` so multi-line bodies and argv limits
 are not a problem.
 
-## Wait mode
+## Interactive mode
 
 `cmg -i` generates a message and then opens a review loop instead of exiting:
 
@@ -100,17 +100,21 @@ message ──▶ [ commit | generate another | feedback | cancel ]
 - **commit** — same path as `--commit`, including staging when needed.
 - **generate another** — drops any feedback turns and re-requests from the
   original system + diff messages.
-- **feedback** — reads a line, appends `assistant` (the current message) and
-  `user` (`prompt::revision(feedback)`) to the history, and re-requests. The
-  turns accumulate, so repeated feedback refines one message rather than
-  restarting.
-- **cancel** (also Esc, Ctrl-C, `q`, or empty feedback) — writes nothing to
-  stdout and exits 1 with `cmg: cancelled`, so a script can tell "the user
-  declined" from "here is a message".
+- **feedback** — reads a line with the raw-mode editor, appends `assistant`
+  (the current message) and `user` (`prompt::revision(feedback)`) to the
+  history, and re-requests. The turns accumulate, so repeated feedback refines
+  one message rather than restarting.
+- **cancel** (also Esc, Ctrl-C, `q`) — writes nothing to stdout and exits 1 with
+  `cmg: cancelled`, so a script can tell "the user declined" from "here is a
+  message". Cancelling the *feedback prompt* instead returns to the menu.
 
-The client therefore exposes `chat(&[ChatMessage])`; `complete` is just the
-two-message case. The loop is refused unless stdin and stderr are both TTYs,
-because raw mode there would otherwise eat piped input.
+The client therefore exposes `chat(&[ChatMessage])`. The loop is refused unless
+stdin and stderr are both TTYs, because raw mode there would otherwise eat
+piped input.
+
+Turns are rendered as a `● agent ›` / `● you ›` bullet with a `│` rail down the
+body. Bullets and rail are plain text, so the shape survives `NO_COLOR`; only
+the emphasis is colour.
 
 ## Design decisions
 
@@ -118,8 +122,11 @@ because raw mode there would otherwise eat piped input.
   binaries, and diffs that match what the user sees in `git diff`.
 - **No async.** One request per run (more only in `-i`) does not justify a
   runtime; `ureq` with rustls keeps the dependency tree and startup time small.
-- **crossterm only for the `-i` menu.** It brings raw mode and key events
-  without pulling in a full TUI framework; every other path does not touch it.
+  The `thinking…` indicator uses a scoped thread with a stop flag, not an
+  executor.
+- **crossterm only for terminal control.** It brings raw mode, key events, and
+  cursor movement for the `-i` menu, feedback editor, and indicator, without
+  pulling in a full TUI framework.
 - **OpenAI-compatible only (v1).** One request/response shape covers OpenAI,
   OpenRouter, Groq, vLLM, LM Studio, and Ollama's `/v1`. Other provider shapes
   can be added later behind a config discriminator if there is demand.
