@@ -8,6 +8,18 @@ Entries are generated from Conventional Commits when a release is cut.
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-05
+
+### Added
+
+- **cli:** warn when a deprecated interactive-mode flag is used
+- **cli:** rename wait mode to interactive mode and show a spinner
+
+### Other
+
+- add README and the MIT licence it refers to
+
+
 ## [0.4.0] - 2026-11-02
 
 ### Added
