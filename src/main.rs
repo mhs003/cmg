@@ -31,6 +31,16 @@ fn main() -> ExitCode {
     }
 
     let cli = Cli::parse();
+    // clap accepts the legacy spellings silently; tell the user which one they
+    // typed and what replaced it. Resolved after parsing so a rejected command
+    // line does not also print a deprecation note.
+    for flag in cli::deprecated_flags(&args) {
+        eprintln!(
+            "cmg: warning: `{flag}` is deprecated and will be removed in a future \
+             version; use {} instead",
+            cli::PREFERRED_FLAG
+        );
+    }
     match run(&cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {

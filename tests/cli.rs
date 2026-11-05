@@ -344,6 +344,40 @@ fn root_commit_works() {
 
 #[test]
 #[ignore]
+fn legacy_flag_spellings_warn_on_stderr() {
+    let repo = Repo::new("interactive-deprecated");
+    repo.write("a.txt", "x\n");
+
+    for flag in ["-w", "--wait", "--watch"] {
+        let out = Command::new(cmg_bin())
+            .arg(flag)
+            .current_dir(&repo.dir)
+            .env_remove("CMG_CONFIG")
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains(&format!("`{flag}` is deprecated")),
+            "{flag} should warn, got: {err}"
+        );
+        assert!(err.contains("-i"), "{flag} warning should name -i: {err}");
+        // The warning is noise, so it must never reach stdout.
+        assert!(out.stdout.is_empty(), "{flag} wrote to stdout");
+    }
+
+    // The current spelling must stay quiet.
+    let out = Command::new(cmg_bin())
+        .arg("-i")
+        .current_dir(&repo.dir)
+        .env_remove("CMG_CONFIG")
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("deprecated"), "-i should not warn: {err}");
+}
+
+#[test]
+#[ignore]
 fn interactive_refuses_without_a_terminal() {
     let (url, _seen) = stub_server(OK_RESPONSE);
     let repo = Repo::new("interactive-notty");

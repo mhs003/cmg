@@ -58,8 +58,10 @@ so they still produce a message; empty files fall back to a name-only list.
 ## Interactive mode (`-i`, `--interactive`)
 
 The flag used to be `-w` / `--wait` / `--watch`, which read as "watch" and
-described it badly. Those spellings are hidden aliases; do not remove them
-without a release note.
+described it badly. Those spellings are hidden aliases and print a deprecation
+warning pointing at `-i`. Do not remove them without a release note. The
+warning is detected by scanning raw argv (`cli::deprecated_flags`), because
+clap does not report which alias matched.
 
 An interactive review loop, and the only part that is allowed to hold the
 terminal. Rules that keep it from becoming a TUI:
