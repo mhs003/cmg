@@ -73,22 +73,35 @@ jobs:
           "x" | Out-File -Encoding ascii a.txt
           git add a.txt
 
-          # One-shot stub that answers with a fixed commit message.
-          $listener = [System.Net.HttpListener]::new()
-          $listener.Prefixes.Add("http://127.0.0.1:8711/")
+          # One-shot stub that answers with a fixed commit message. A
+          # TcpListener on loopback needs no URL ACL, unlike HttpListener.
+          $listener = [System.Net.Sockets.TcpListener]::new([ipaddress]::Loopback, 8711)
           $listener.Start()
-          $job = Start-Job -ScriptBlock {
+          $stub = Start-ThreadJob -ScriptBlock {
             param($l)
-            $ctx = $l.GetContext()
-            $null = $ctx.Request.InputStream.Read([byte[]]::new(65536), 0, 65536)
-            $body = '{"choices":[{"message":{"content":"feat: windows smoke"}}]}'
-            $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-            $ctx.Response.ContentType = "application/json"
-            $ctx.Response.OutputStream.Write($bytes, 0, $bytes.Length)
-            $ctx.Response.Close()
-            $l.Stop()
+            try {
+              $client = $l.AcceptTcpClient()
+              $stream = $client.GetStream()
+              $reader = [System.IO.StreamReader]::new($stream)
+              # Drain headers (and any body) before answering.
+              while ($true) {
+                $line = $reader.ReadLine()
+                if ([string]::IsNullOrEmpty($line)) { break }
+              }
+              $body = '{"choices":[{"message":{"content":"feat: windows smoke"}}]}'
+              $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+              $head = "HTTP/1.1 200 OK`r`nContent-Type: application/json`r`nContent-Length: $($bytes.Length)`r`nConnection: close`r`n`r`n"
+              $headBytes = [System.Text.Encoding]::ASCII.GetBytes($head)
+              $stream.Write($headBytes, 0, $headBytes.Length)
+              $stream.Write($bytes, 0, $bytes.Length)
+              $stream.Flush()
+              $client.Close()
+            } finally {
+              $l.Stop()
+            }
           } -ArgumentList $listener
           Start-Sleep -Seconds 1
+          if (-not $listener.Server.IsBound) { throw "stub listener did not start" }
 
           $cfg = Join-Path $repo "cfg.json"
           '{"provider":{"base_url":"http://127.0.0.1:8711/v1","model":"stub","api_key":"k"},"prompt":{"include_log_context":false}}' | Out-File -Encoding ascii $cfg
@@ -97,6 +110,7 @@ jobs:
           Write-Host "stdout: $msg (exit $code)"
           if ($code -ne 0) { throw "cmg exited $code" }
           if ($msg -ne "feat: windows smoke") { throw "unexpected message: $msg" }
+          Remove-Job $stub -Force
 
   # Decide the next version from Conventional Commits since the last tag,
   # update VERSION + CHANGELOG.md, commit, tag, and push the tag.
