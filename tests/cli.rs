@@ -424,6 +424,24 @@ fn wait_and_commit_are_independent_flags() {
 
 #[test]
 #[ignore]
+fn init_is_listed_under_commands() {
+    // Subcommands belong in the Commands section, not buried in trailing text.
+    let out = Command::new(cmg_bin()).arg("--help").output().unwrap();
+    let help = String::from_utf8_lossy(&out.stdout);
+    assert!(help.contains("Commands:"), "help: {help}");
+    assert!(help.contains("init"), "help: {help}");
+
+    let out = Command::new(cmg_bin())
+        .args(["init", "--help"])
+        .output()
+        .unwrap();
+    let sub = String::from_utf8_lossy(&out.stdout);
+    assert!(sub.contains("--toml"), "init help: {sub}");
+    assert!(sub.contains("--force"), "init help: {sub}");
+}
+
+#[test]
+#[ignore]
 fn interactive_keeps_the_old_flag_aliases() {
     // The flag was renamed; keep the old spelling working.
     let repo = Repo::new("interactive-alias");

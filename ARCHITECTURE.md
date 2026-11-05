@@ -14,7 +14,7 @@ There is no state between runs, no cache, no background process.
 
 | File | Responsibility |
 | --- | --- |
-| `src/main.rs` | Parses args, loads config, resolves the diff target, builds the prompt, calls the client, writes output, optionally commits. `cmg init` is dispatched here before clap. |
+| `src/main.rs` | Parses args, loads config, resolves the diff target, builds the prompt, calls the client, writes output, optionally commits. Subcommands (`init`) are dispatched from here before any git or network work. |
 | `src/cli.rs` | `clap` derive struct. `TargetMode` (`Auto`/`Staged`/`Unstaged`/`All`) and the `git diff` arguments for each. |
 | `src/config.rs` | Finds the config file, parses JSON or TOML into the same `Config` struct, applies defaults, validates the API key, writes the example config. |
 | `src/git.rs` | Thin `Command::new("git")` wrapper. Diff, log, status, HEAD detection, empty-tree hash, and `git commit --file -`. |

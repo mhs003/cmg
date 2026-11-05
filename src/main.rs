@@ -26,13 +26,24 @@ use config::{Config, DiffConfig};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
-    // `cmg init`: scaffolding only, never talks to git or the API, so it is
-    // dispatched before clap sees the arguments.
-    if args.get(1).map(|s| s.as_str()) == Some("init") {
-        return init_command(&args);
+    let cli = Cli::parse();
+
+    // Subcommands do no generation, so they are handled before anything that
+    // touches git, the network, or the config file.
+    if let Some(command) = &cli.command {
+        let result = match command {
+            cli::Command::Init { toml, force } => config::write_example(*force, *toml)
+                .map(|p| eprintln!("cmg: wrote {}", p.display())),
+        };
+        return match result {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("cmg: {e:#}");
+                ExitCode::FAILURE
+            }
+        };
     }
 
-    let cli = Cli::parse();
     if cli.version {
         print_version(&cli);
         return ExitCode::SUCCESS;
@@ -69,31 +80,6 @@ fn print_version(cli: &Cli) {
         // Nothing configured yet: name the directory, since either extension
         // is valid and picking one would be a guess.
         println!("config: {}", config::config_dir_hint());
-    }
-}
-
-fn init_command(args: &[String]) -> ExitCode {
-    if args.iter().any(|a| a == "-h" || a == "--help") {
-        println!(
-            "Usage: cmg init [--toml] [--force]\n\n\
-             Writes an example config to the platform config directory\n\
-             ($XDG_CONFIG_HOME/cmg or ~/.config/cmg; %APPDATA%\\cmg on Windows).\n\
-               --toml    write config.toml instead of config.json\n\
-               --force   overwrite an existing config"
-        );
-        return ExitCode::SUCCESS;
-    }
-    let force = args.iter().any(|a| a == "--force" || a == "-f");
-    let toml = args.iter().any(|a| a == "--toml");
-    match config::write_example(force, toml) {
-        Ok(p) => {
-            eprintln!("cmg: wrote {}", p.display());
-            ExitCode::SUCCESS
-        }
-        Err(e) => {
-            eprintln!("cmg: {e:#}");
-            ExitCode::FAILURE
-        }
     }
 }
 

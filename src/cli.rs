@@ -3,7 +3,7 @@
 //! Note on naming: `-c` belongs to `--commit` and `-s`/`-u` to the diff
 //! selection flags. Everything else is long-only to keep the surface small.
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 /// Generate a git commit message from your changes using an LLM.
 ///
@@ -11,11 +11,9 @@ use clap::Parser;
 /// create the commit. Without `--staged`/`--unstaged`/`--all` the target is
 /// chosen automatically: staged changes win, otherwise unstaged ones are used.
 ///
-/// Run `cmg init` to write an example config (`--toml` for TOML instead of
-/// JSON).
+/// Use `cmg init` to write an example config; see the Commands section.
 #[derive(Debug, Clone, Parser)]
 #[command(name = "cmg", about, long_about = None, disable_version_flag = true)]
-#[command(after_help = "Run `cmg init [--toml]` to write an example config.")]
 pub struct Cli {
     /// Print version and the config file in use
     #[arg(short = 'V', long = "version", action = clap::ArgAction::SetTrue)]
@@ -90,6 +88,25 @@ pub struct Cli {
         short_aliases = ['w']
     )]
     pub interactive: bool,
+
+    /// Commands that do not generate a message.
+    #[command(subcommand)]
+    pub command: Option<Command>,
+}
+
+/// Subcommands, listed under a "Commands" section in `--help`.
+#[derive(Debug, Clone, Subcommand)]
+pub enum Command {
+    /// Write an example config to the platform config directory
+    Init {
+        /// Write config.toml instead of config.json
+        #[arg(long)]
+        toml: bool,
+
+        /// Overwrite an existing config
+        #[arg(short, long)]
+        force: bool,
+    },
 }
 
 /// The spelling users should write instead of the deprecated ones.
