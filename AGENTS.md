@@ -69,7 +69,8 @@ terminal. Rules that keep it from becoming a TUI:
 - Requires a TTY on both stdin and stderr; refuse with an error otherwise.
 - Raw mode is enabled only for the menu and always restored, even on error.
 - Prompts, the rendered message, and the menu go to **stderr**. stdout still
-  receives only the message (the accepted one, or the rejected one on cancel).
+  receives only the message, and only when one is accepted: cancelling writes
+  nothing to stdout and exits 1.
 - Presentation is transcript-style: turns are a `● agent ›` / `● you ›`
   bullet plus a `│` rail that runs down the body, so the flow reads as one
   conversation. The rail and bullets are plain text, so the shape is identical

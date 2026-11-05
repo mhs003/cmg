@@ -104,8 +104,9 @@ message ──▶ [ commit | generate another | feedback | cancel ]
   `user` (`prompt::revision(feedback)`) to the history, and re-requests. The
   turns accumulate, so repeated feedback refines one message rather than
   restarting.
-- **cancel** (also Esc, Ctrl-C, `q`, or empty feedback) — prints the rejected
-  message to stdout and exits 0 without committing.
+- **cancel** (also Esc, Ctrl-C, `q`, or empty feedback) — writes nothing to
+  stdout and exits 1 with `cmg: cancelled`, so a script can tell "the user
+  declined" from "here is a message".
 
 The client therefore exposes `chat(&[ChatMessage])`; `complete` is just the
 two-message case. The loop is refused unless stdin and stderr are both TTYs,

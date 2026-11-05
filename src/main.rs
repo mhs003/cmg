@@ -280,9 +280,9 @@ fn interactive_loop(
                 return do_commit(target, &current, 1);
             }
             wait::Outcome::Cancel => {
-                // Still print the rejected message so it can be copied or
-                // piped; the commit itself was explicitly declined.
-                return write_messages(&[current]);
+                // Cancelling is a failure: nothing is written to stdout, so a
+                // script can tell "user declined" from "here is a message".
+                bail!("cancelled");
             }
             wait::Outcome::Regenerate => {
                 history.truncate(base);
