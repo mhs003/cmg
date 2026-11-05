@@ -33,6 +33,10 @@ fn main() -> ExitCode {
     }
 
     let cli = Cli::parse();
+    if cli.version {
+        print_version(&cli);
+        return ExitCode::SUCCESS;
+    }
     // clap accepts the legacy spellings silently; tell the user which one they
     // typed and what replaced it. Resolved after parsing so a rejected command
     // line does not also print a deprecation note.
@@ -48,12 +52,33 @@ fn main() -> ExitCode {
     }
 }
 
+/// `-V`: version plus the config file that would be used.
+///
+/// The path is the useful half — on Windows it lives under `%APPDATA%`, which
+/// is not somewhere people look. A missing file is reported as such rather
+/// than silently, so `cmg init` is the obvious next step.
+fn print_version(cli: &Cli) {
+    println!("cmg {}", env!("CARGO_PKG_VERSION"));
+    let (path, exists) = config::config_in_use(cli.config.as_deref());
+    if exists {
+        println!("config: {}", path.display());
+    } else if cli.config.is_some() || std::env::var_os("CMG_CONFIG").is_some() {
+        // Explicitly requested, so report that path rather than the default dir.
+        println!("config: {} (not found)", path.display());
+    } else {
+        // Nothing configured yet: name the directory, since either extension
+        // is valid and picking one would be a guess.
+        println!("config: {}", config::config_dir_hint());
+    }
+}
+
 fn init_command(args: &[String]) -> ExitCode {
     if args.iter().any(|a| a == "-h" || a == "--help") {
         println!(
             "Usage: cmg init [--toml] [--force]\n\n\
-             Writes an example config to $XDG_CONFIG_HOME/cmg/config.json (or ~/.config/...).\n\
-               --toml    write config.toml instead\n\
+             Writes an example config to the platform config directory\n\
+             ($XDG_CONFIG_HOME/cmg or ~/.config/cmg; %APPDATA%\\cmg on Windows).\n\
+               --toml    write config.toml instead of config.json\n\
                --force   overwrite an existing config"
         );
         return ExitCode::SUCCESS;

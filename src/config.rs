@@ -341,6 +341,45 @@ pub fn default_config_path() -> Option<PathBuf> {
     Some(dir.join("config.json"))
 }
 
+/// The config `cmg` would use, and whether it exists, for `-V`.
+///
+/// Mirrors the load order (`--config`, `$CMG_CONFIG`, the platform default) but
+/// never fails: `-V` should report where the file *would* be even when nothing
+/// is configured, which is exactly when it is hardest to find.
+///
+/// Both `.json` and `.toml` are valid, so an existing TOML file is reported by
+/// name rather than being masked by the default JSON path.
+pub fn config_in_use(explicit: Option<&str>) -> (PathBuf, bool) {
+    if let Some(p) = explicit {
+        let path = PathBuf::from(p);
+        let exists = path.is_file();
+        return (path, exists);
+    }
+    if let Ok(p) = std::env::var("CMG_CONFIG") {
+        if !p.trim().is_empty() {
+            let path = PathBuf::from(p);
+            let exists = path.is_file();
+            return (path, exists);
+        }
+    }
+    let path = default_config_path().unwrap_or_else(|| PathBuf::from("~/.config/cmg/config.json"));
+    let exists = path.is_file();
+    (path, exists)
+}
+
+/// Where `cmg init` would write, and what it would be called, for `-V` when no
+/// config exists yet. Both extensions are valid, so the message names the
+/// directory and both candidates instead of guessing one.
+pub fn config_dir_hint() -> String {
+    match default_config_dir() {
+        Some(dir) => format!(
+            "{} (neither config.json nor config.toml exists)",
+            dir.display()
+        ),
+        None => "unknown (set one with --config)".to_string(),
+    }
+}
+
 fn resolve_path(explicit: Option<&str>) -> Result<Option<PathBuf>> {
     if let Some(p) = explicit {
         let p = PathBuf::from(p);
@@ -379,6 +418,19 @@ pub fn write_example(force: bool, toml: bool) -> Result<PathBuf> {
         bail!(
             "{} already exists; pass --force to overwrite",
             path.display()
+        );
+    }
+    // Both extensions are read, and JSON wins when both exist. Creating the
+    // other one would silently shadow the config the user already had, so say
+    // so rather than leaving them hunting for why their settings stopped
+    // applying.
+    let other = dir.join(if toml { "config.json" } else { "config.toml" });
+    if other.is_file() && !path.exists() && !force {
+        bail!(
+            "{} already exists and would take precedence.\n\
+             Edit it, or pass `--force` to replace it with {}.",
+            other.display(),
+            path.file_name().unwrap_or_default().to_string_lossy()
         );
     }
     std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
@@ -528,5 +580,43 @@ mod config_dir_tests {
     #[test]
     fn unix_with_nothing_set_reports_none() {
         assert_eq!(config_dir_from(UNIX, env(&[])), None);
+    }
+}
+
+#[cfg(test)]
+mod config_in_use_tests {
+    use super::*;
+
+    #[test]
+    fn explicit_path_is_reported_even_when_missing() {
+        // -V must not hide a typo'd --config path.
+        let (path, exists) = config_in_use(Some("/definitely/not/here.toml"));
+        assert_eq!(path, PathBuf::from("/definitely/not/here.toml"));
+        assert!(!exists);
+    }
+
+    #[test]
+    fn toml_is_selected_when_it_is_the_only_file() {
+        // A TOML-only setup must not be reported as config.json. Uses the real
+        // default dir, so create the file only if the directory is empty of
+        // both, and clean up afterwards.
+        let Some(dir) = default_config_dir() else {
+            return;
+        };
+        let json = dir.join("config.json");
+        let toml = dir.join("config.toml");
+        if json.exists() || toml.exists() {
+            // A real setup is present; do not disturb it.
+            return;
+        }
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&toml, "").unwrap();
+        let picked = default_config_path().unwrap();
+        let _ = std::fs::remove_file(&toml);
+        assert_eq!(
+            picked.file_name().unwrap(),
+            "config.toml",
+            "picked {picked:?}"
+        );
     }
 }

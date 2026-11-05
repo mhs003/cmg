@@ -26,8 +26,14 @@ cargo build --release           # target/release/cmg
 ## Configure
 
 ```sh
-cmg init        # writes ~/.config/cmg/config.json
+cmg init              # writes config.json to the config dir
+cmg init --toml       # write config.toml instead
+cmg -V                # version and which config file is in use
 ```
+
+The config dir is `%APPDATA%\cmg` on Windows, otherwise
+`$XDG_CONFIG_HOME/cmg` or `~/.config/cmg`. `cmg -V` prints the resolved path,
+which saves guessing. If both `config.json` and `config.toml` exist, JSON wins.
 
 Then set your key. The file defaults to reading `OPENAI_API_KEY`:
 
@@ -41,8 +47,8 @@ Then set your key. The file defaults to reading `OPENAI_API_KEY`:
 }
 ```
 
-Config is looked up in `--config`, `$CMG_CONFIG`, then
-`$XDG_CONFIG_HOME/cmg/config.{json,toml}`. TOML works too. Rest of the file:
+Config is looked up in `--config`, `$CMG_CONFIG`, then the platform config dir.
+TOML works too. Rest of the file:
 
 ```json
 {

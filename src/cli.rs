@@ -10,9 +10,16 @@ use clap::Parser;
 /// By default the message is printed to stdout. Use `--commit` to also
 /// create the commit. Without `--staged`/`--unstaged`/`--all` the target is
 /// chosen automatically: staged changes win, otherwise unstaged ones are used.
+///
+/// Run `cmg init` to write an example config (`--toml` for TOML instead of
+/// JSON).
 #[derive(Debug, Clone, Parser)]
-#[command(name = "cmg", version, about, long_about = None)]
+#[command(name = "cmg", about, long_about = None, disable_version_flag = true)]
+#[command(after_help = "Run `cmg init [--toml]` to write an example config.")]
 pub struct Cli {
+    /// Print version and the config file in use
+    #[arg(short = 'V', long = "version", action = clap::ArgAction::SetTrue)]
+    pub version: bool,
     /// Only consider staged changes (`git diff --cached`).
     #[arg(short = 's', long, conflicts_with_all = ["unstaged", "all"])]
     pub staged: bool,
