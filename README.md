@@ -97,7 +97,7 @@ before you `git add`.
 - Exit code is 1 on any failure, and messages go to stderr. Cancelling `-i`
   writes nothing to stdout and exits 1.
 
-Full reference, including every config key: [DOCS.md](DOCS.md).
+Full reference and documentation: [DOCS.md](DOCS.md).
 
 ## Licence
 
