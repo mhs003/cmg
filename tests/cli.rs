@@ -344,6 +344,27 @@ fn root_commit_works() {
 
 #[test]
 #[ignore]
+fn the_indicator_never_reaches_stdout() {
+    // Every mode shows a "thinking" line on stderr; stdout must stay exactly
+    // the message so `git commit -m "$(cmg)"` works.
+    let (url, _seen) = stub_server(OK_RESPONSE);
+    let repo = Repo::new("stdout-contract");
+    repo.write("a.txt", "x\n");
+    repo.git(&["add", "a.txt"]);
+    let cfg = repo.write_config(&url);
+
+    let out = repo.run(&["--config", cfg.to_str().unwrap()]);
+    assert!(out.status.success());
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(!stdout.contains("thinking"), "indicator leaked: {stdout:?}");
+    assert_eq!(stdout.trim(), "feat: add greeter");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("thinking"), "stderr: {stderr:?}");
+}
+
+#[test]
+#[ignore]
 fn legacy_flag_spellings_warn_on_stderr() {
     let repo = Repo::new("interactive-deprecated");
     repo.write("a.txt", "x\n");

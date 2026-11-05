@@ -85,7 +85,8 @@ before you `git add`.
 - Lockfiles and generated files are excluded from the diff.
 - Model output has fences and preambles stripped unless `--raw`.
 - No TUI. The menu is one redrawn line; `NO_COLOR` is honoured, and turns the
-  `-i` spinner into a single static line.
+  `thinking…` indicator into a single static line.
+- The indicator goes to stderr, so it never pollutes piped stdout.
 - Exit code is 1 on any failure, and messages go to stderr.
 
 ## Licence

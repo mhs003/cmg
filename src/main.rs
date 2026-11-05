@@ -236,9 +236,10 @@ fn generate(
 
 /// One request, with the usual timing diagnostics.
 ///
-/// Only interactive mode shows a spinner. Other runs stay silent because their
-/// stderr is often a log, and a request usually finishes before a spinner
-/// would tell the user anything.
+/// Every mode shows the indicator: a slow model looks frozen in any of them.
+/// It writes to stderr, so piping `cmg` into `git commit -m "$(cmg)"` is
+/// unaffected, and on a non-terminal stderr it degrades to a single line
+/// instead of animated frames.
 fn request(
     client: &llm::Client,
     history: &[llm::ChatMessage],
@@ -246,12 +247,10 @@ fn request(
     label: &str,
 ) -> Result<String> {
     let started = std::time::Instant::now();
-    let spinner = cli.interactive.then(|| spinner::Spinner::start(label));
+    let spinner = spinner::Spinner::start(label);
     let result = client.chat(history).context("generating commit message");
     // Stop before anything else writes to stderr, or the two would interleave.
-    if let Some(spinner) = spinner {
-        spinner.stop();
-    }
+    spinner.stop();
     let raw = result?;
     if cli.verbose {
         eprintln!("cmg: response in {:.1}s", started.elapsed().as_secs_f64());

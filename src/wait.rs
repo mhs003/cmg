@@ -68,7 +68,13 @@ pub fn review(message: &str) -> Result<Outcome> {
     match menu(color)? {
         Choice::Commit => Ok(Outcome::Commit),
         Choice::Cancel => Ok(Outcome::Cancel),
-        Choice::Regenerate => Ok(Outcome::Regenerate),
+        Choice::Regenerate => {
+            // Echo the choice as a turn: otherwise the new message appears with
+            // no sign of what produced it.
+            render_user_action(&mut stderr, "generate another", color)?;
+            stderr.flush()?;
+            Ok(Outcome::Regenerate)
+        }
         Choice::Feedback => match read_feedback(color)? {
             // No echo here: the terminal already showed the line the user
             // typed next to the prompt.
@@ -119,6 +125,20 @@ fn render_agent_turn(out: &mut impl Write, action: &str, body: &str, color: bool
         write_commit_line(out, line, false, color)?;
     }
     rail(out, color)?;
+    Ok(())
+}
+
+/// A user turn that is an action rather than typed text (`generate another`).
+/// No rail: there is no body hanging off it.
+fn render_user_action(out: &mut impl Write, action: &str, color: bool) -> Result<()> {
+    write!(out, "  ")?;
+    if color {
+        queue!(out, SetForegroundColor(Color::DarkCyan))?;
+    }
+    writeln!(out, "{BULLET} {USER_LABEL} {action}")?;
+    if color {
+        queue!(out, ResetColor)?;
+    }
     Ok(())
 }
 
@@ -397,5 +417,20 @@ mod plain_tests {
         for line in s.lines().skip(1) {
             assert!(line.starts_with("  │"), "line broke the rail: {line:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod user_turn_tests {
+    use super::*;
+
+    #[test]
+    fn regenerate_is_echoed_as_a_user_turn() {
+        let mut buf = Vec::new();
+        render_user_action(&mut buf, "generate another", false).unwrap();
+        assert_eq!(
+            String::from_utf8(buf).unwrap(),
+            "  ● you › generate another\n"
+        );
     }
 }
