@@ -66,13 +66,13 @@ OpenRouter, Groq, vLLM, LM Studio, Ollama's `/v1`.
 
 ```sh
 cmg                  # staged changes if any, otherwise unstaged
-cmg -w               # review it first
+cmg -i               # review it first
 cmg -c               # generate and commit
 cmg -n 3             # three alternatives, one per line
 cmg -t "mention the parser" -s
 ```
 
-`-w` generates a message, then waits on a menu: **commit**, **generate
+`-i` generates a message, then waits on a menu: **commit**, **generate
 another**, **feedback**, **cancel**. Feedback sends your note back to the model
 with the previous message in context, so repeated notes keep refining the same
 message. Prompts go to stderr; only the message reaches stdout.
@@ -84,7 +84,8 @@ before you `git add`.
 
 - Lockfiles and generated files are excluded from the diff.
 - Model output has fences and preambles stripped unless `--raw`.
-- No TUI. The menu is one redrawn line; `NO_COLOR` is honoured.
+- No TUI. The menu is one redrawn line; `NO_COLOR` is honoured, and turns the
+  `-i` spinner into a single static line.
 - Exit code is 1 on any failure, and messages go to stderr.
 
 ## Licence

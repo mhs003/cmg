@@ -344,9 +344,9 @@ fn root_commit_works() {
 
 #[test]
 #[ignore]
-fn wait_refuses_without_a_terminal() {
+fn interactive_refuses_without_a_terminal() {
     let (url, _seen) = stub_server(OK_RESPONSE);
-    let repo = Repo::new("wait-notty");
+    let repo = Repo::new("interactive-notty");
     repo.write("a.txt", "x\n");
     repo.git(&["add", "a.txt"]);
     let cfg = repo.write_config(&url);
@@ -355,7 +355,7 @@ fn wait_refuses_without_a_terminal() {
     let out = repo.run(&["-w", "--config", cfg.to_str().unwrap()]);
     assert!(!out.status.success());
     assert!(out.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("interactive terminal"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("needs a terminal"));
 }
 
 #[test]
@@ -363,25 +363,27 @@ fn wait_refuses_without_a_terminal() {
 fn wait_and_commit_are_independent_flags() {
     let out = Command::new(cmg_bin()).arg("--help").output().unwrap();
     let help = String::from_utf8_lossy(&out.stdout);
-    assert!(help.contains("-w, --wait"), "help: {help}");
+    assert!(help.contains("-i, --interactive"), "help: {help}");
     assert!(help.contains("-c, --commit"), "help: {help}");
 }
 
 #[test]
 #[ignore]
-fn wait_has_a_watch_alias() {
+fn interactive_keeps_the_old_flag_aliases() {
     // The flag was renamed; keep the old spelling working.
-    let repo = Repo::new("wait-alias");
+    let repo = Repo::new("interactive-alias");
     repo.write("a.txt", "x\n");
-    let out = Command::new(cmg_bin())
-        .arg("--watch")
-        .current_dir(&repo.dir)
-        .env_remove("CMG_CONFIG")
-        .output()
-        .unwrap();
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        err.contains("interactive terminal"),
-        "alias should reach wait mode, got: {err}"
-    );
+    for flag in ["-w", "--wait", "--watch", "-i", "--interactive"] {
+        let out = Command::new(cmg_bin())
+            .arg(flag)
+            .current_dir(&repo.dir)
+            .env_remove("CMG_CONFIG")
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            err.contains("needs a terminal"),
+            "{flag} should reach interactive mode, got: {err}"
+        );
+    }
 }

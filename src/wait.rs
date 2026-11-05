@@ -1,8 +1,8 @@
-//! Interactive review loop for `cmg -w`.
+//! Interactive review loop for `cmg -i`.
 //!
 //! Everything here talks to stderr: the rendered message, the menu, and the
 //! feedback prompt. stdout stays reserved for the final commit message so the
-//! "stdout is a contract" rule in AGENTS.md still holds even in wait mode.
+//! "stdout is a contract" rule in AGENTS.md still holds even in interactive mode.
 //!
 //! Presentation rules, so this stays a CLI and not a TUI:
 //! - No box drawing, no alternate screen, no full-screen repaint. The
@@ -62,7 +62,7 @@ pub fn review(message: &str) -> Result<Outcome> {
     let color = color_enabled();
 
     writeln!(stderr)?;
-    render_turn(&mut stderr, "suggested", message, color)?;
+    render_turn(&mut stderr, "Generated commit suggestion:", message, color)?;
     writeln!(stderr)?;
     stderr.flush()?;
 
@@ -89,7 +89,9 @@ fn render_turn(out: &mut impl Write, label: &str, body: &str, color: bool) -> Re
     if color {
         queue!(
             out,
-            SetForegroundColor(if label == "you" {
+            // The user's own turn is the one that stands out; the model's
+            // label stays muted so the message itself draws the eye.
+            SetForegroundColor(if is_user_turn(label) {
                 Color::DarkCyan
             } else {
                 Color::DarkGrey
@@ -114,6 +116,13 @@ fn render_turn(out: &mut impl Write, label: &str, body: &str, color: bool) -> Re
         write_commit_line(out, line, false, color)?;
     }
     Ok(())
+}
+
+/// The label printed for the user's feedback line.
+const USER_LABEL: &str = "you ›";
+
+fn is_user_turn(label: &str) -> bool {
+    label == USER_LABEL
 }
 
 /// Write one line of a commit message, styling only the Conventional Commits
@@ -326,10 +335,16 @@ mod tests {
     #[test]
     fn plain_rendering_has_no_escape_codes() {
         let mut buf = Vec::new();
-        render_turn(&mut buf, "suggested", "feat: x\n\nbody", false).unwrap();
+        render_turn(
+            &mut buf,
+            "Generated commit suggestion:",
+            "feat: x\n\nbody",
+            false,
+        )
+        .unwrap();
         let s = String::from_utf8(buf).unwrap();
         assert!(!s.contains('\u{1b}'), "plain output leaked escapes: {s:?}");
-        assert!(s.contains("suggested"));
+        assert!(s.contains("Generated commit suggestion:"));
         assert!(s.contains("feat: x"));
     }
 }

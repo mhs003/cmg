@@ -37,7 +37,8 @@ src/git.rs          git subprocess helpers
 src/prompt.rs       prompt construction and diff truncation
 src/llm.rs          OpenAI-compatible HTTP client
 src/postprocess.rs  fence/preamble stripping of model output
-src/wait.rs         `-w` review loop: arrow-key menu, feedback input
+src/spinner.rs      one-line "thinking…" indicator for the API call
+src/wait.rs         `-i` review loop: arrow-key menu, feedback input
 tests/cli.rs        end-to-end tests against a local stub HTTP server
 ```
 
@@ -54,10 +55,11 @@ but untracked files exist, diff them against `/dev/null` (`git::untracked_diff`)
 so they still produce a message; empty files fall back to a name-only list.
 `--commit` stages everything first when the target was not already staged.
 
-## Wait mode (`-w`, `--wait`)
+## Interactive mode (`-i`, `--interactive`)
 
-`--watch` is kept as an alias for the old name; do not remove it without a
-release note.
+The flag used to be `-w` / `--wait` / `--watch`, which read as "watch" and
+described it badly. Those spellings are hidden aliases; do not remove them
+without a release note.
 
 An interactive review loop, and the only part that is allowed to hold the
 terminal. Rules that keep it from becoming a TUI:
@@ -66,8 +68,9 @@ terminal. Rules that keep it from becoming a TUI:
 - Raw mode is enabled only for the menu and always restored, even on error.
 - Prompts, the rendered message, and the menu go to **stderr**. stdout still
   receives only the message (the accepted one, or the rejected one on cancel).
-- Presentation is transcript-style: a labelled turn (`suggested` / `you ›`),
-  never a box, an alternate screen, or a full repaint.
+- Presentation is transcript-style: a labelled turn
+  (`Generated commit suggestion:` / `you ›`), never a box, an alternate
+  screen, or a full repaint.
 - Colour is decorative. Every state is also legible without it, and
   `NO_COLOR` / `TERM=dumb` / non-TTY stderr emit no colour at all
   (`tests` in `src/wait.rs` assert the plain path has no escape codes).

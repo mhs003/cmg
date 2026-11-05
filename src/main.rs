@@ -10,6 +10,7 @@ mod git;
 mod llm;
 mod postprocess;
 mod prompt;
+mod spinner;
 mod wait;
 
 use std::io::{self, IsTerminal, Write};
@@ -72,8 +73,8 @@ fn run(cli: &Cli) -> Result<()> {
         cfg.provider.base_url = u.clone();
     }
 
-    if cli.wait && !(io::stdin().is_terminal() && io::stderr().is_terminal()) {
-        bail!("--wait needs an interactive terminal (stdin and stderr)");
+    if cli.interactive && !(io::stdin().is_terminal() && io::stderr().is_terminal()) {
+        bail!("--interactive needs a terminal (stdin and stderr)");
     }
 
     if !git::is_repo() {
@@ -184,11 +185,11 @@ fn generate(
         llm::ChatMessage::new("user", &user),
     ];
 
-    if cli.wait {
-        return wait_loop(cli, &client, target, history);
+    if cli.interactive {
+        return interactive_loop(cli, &client, target, history);
     }
 
-    let messages = build_messages(&request(&client, &history, cli)?, cli);
+    let messages = build_messages(&request(&client, &history, cli, "thinking")?, cli);
     let first = messages
         .first()
         .cloned()
@@ -202,19 +203,34 @@ fn generate(
 }
 
 /// One request, with the usual timing diagnostics.
-fn request(client: &llm::Client, history: &[llm::ChatMessage], cli: &Cli) -> Result<String> {
+///
+/// Only interactive mode shows a spinner. Other runs stay silent because their
+/// stderr is often a log, and a request usually finishes before a spinner
+/// would tell the user anything.
+fn request(
+    client: &llm::Client,
+    history: &[llm::ChatMessage],
+    cli: &Cli,
+    label: &str,
+) -> Result<String> {
     let started = std::time::Instant::now();
-    let raw = client.chat(history).context("generating commit message")?;
+    let spinner = cli.interactive.then(|| spinner::Spinner::start(label));
+    let result = client.chat(history).context("generating commit message");
+    // Stop before anything else writes to stderr, or the two would interleave.
+    if let Some(spinner) = spinner {
+        spinner.stop();
+    }
+    let raw = result?;
     if cli.verbose {
         eprintln!("cmg: response in {:.1}s", started.elapsed().as_secs_f64());
     }
     Ok(raw)
 }
 
-/// Review loop for `-w`: show the message, then commit, regenerate, revise
+/// Review loop for `-i`: show the message, then commit, regenerate, revise
 /// with feedback, or cancel. Prompts go to stderr; only a committed message
 /// ever reaches stdout.
-fn wait_loop(
+fn interactive_loop(
     cli: &Cli,
     client: &llm::Client,
     target: TargetMode,
@@ -224,7 +240,7 @@ fn wait_loop(
     // while "feedback" keeps it.
     let base = history.len();
 
-    let response = request(client, &history, cli)?;
+    let response = request(client, &history, cli, "thinking")?;
     let mut current = first_message(&response, cli)?;
 
     loop {
@@ -239,7 +255,7 @@ fn wait_loop(
             }
             wait::Outcome::Regenerate => {
                 history.truncate(base);
-                let response = request(client, &history, cli)?;
+                let response = request(client, &history, cli, "thinking")?;
                 current = first_message(&response, cli)?;
             }
             wait::Outcome::Feedback(text) => {
@@ -247,7 +263,7 @@ fn wait_loop(
                 // message instead of starting over.
                 history.push(llm::ChatMessage::new("assistant", &current));
                 history.push(llm::ChatMessage::new("user", &prompt::revision(&text)));
-                let response = request(client, &history, cli)?;
+                let response = request(client, &history, cli, "revising")?;
                 current = first_message(&response, cli)?;
             }
         }

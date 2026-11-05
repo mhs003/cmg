@@ -69,10 +69,19 @@ pub struct Cli {
     #[arg(short = 'c', long)]
     pub commit: bool,
 
-    /// Wait mode: review the message, then commit, regenerate, or revise it
-    /// with your feedback. Requires a terminal.
-    #[arg(short = 'w', long, alias = "watch")]
-    pub wait: bool,
+    /// Review the message, then commit, regenerate, or revise it with your
+    /// feedback. Requires a terminal.
+    //
+    // The old `-w` / `--wait` / `--watch` spellings stay as hidden aliases so
+    // existing scripts and aliases keep working. A plain `//` comment, not
+    // `///`, keeps the note out of `--help`.
+    #[arg(
+        short = 'i',
+        long,
+        aliases = ["wait", "watch"],
+        short_aliases = ['w']
+    )]
+    pub interactive: bool,
 }
 
 impl Cli {

@@ -21,7 +21,8 @@ There is no state between runs, no cache, no background process.
 | `src/prompt.rs` | System rules + user message (recent log, hint, diff). Diff size truncation. |
 | `src/llm.rs` | `POST {base_url}/chat/completions` via `ureq`. Splits multi-message responses. |
 | `src/postprocess.rs` | Strips markdown fences and conversational preambles from model output. |
-| `src/wait.rs` | Interactive `-w` review loop: arrow-key menu (raw mode) and feedback input. |
+| `src/spinner.rs` | One-line animated indicator shown while the blocking request runs. |
+| `src/wait.rs` | Interactive `-i` review loop: arrow-key menu (raw mode) and feedback input. |
 
 ## Data flow
 
@@ -90,7 +91,7 @@ are not a problem.
 
 ## Wait mode
 
-`cmg -w` generates a message and then opens a review loop instead of exiting:
+`cmg -i` generates a message and then opens a review loop instead of exiting:
 
 ```
 message ──▶ [ commit | generate another | feedback | cancel ]
@@ -114,9 +115,9 @@ because raw mode there would otherwise eat piped input.
 
 - **Git subprocess over libgit2.** Zero native build dependencies, smaller
   binaries, and diffs that match what the user sees in `git diff`.
-- **No async.** One request per run (more only in `-w`) does not justify a
+- **No async.** One request per run (more only in `-i`) does not justify a
   runtime; `ureq` with rustls keeps the dependency tree and startup time small.
-- **crossterm only for the `-w` menu.** It brings raw mode and key events
+- **crossterm only for the `-i` menu.** It brings raw mode and key events
   without pulling in a full TUI framework; every other path does not touch it.
 - **OpenAI-compatible only (v1).** One request/response shape covers OpenAI,
   OpenRouter, Groq, vLLM, LM Studio, and Ollama's `/v1`. Other provider shapes

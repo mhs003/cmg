@@ -97,7 +97,7 @@ pub fn user(input: &PromptInput<'_>, log: &[String]) -> String {
     out
 }
 
-/// Follow-up turn when the user asks for a revision in wait mode. The
+/// Follow-up turn when the user asks for a revision in interactive mode. The
 /// previous message stays in the history so repeated feedback keeps refining
 /// the same message rather than starting over.
 pub fn revision(feedback: &str) -> String {
