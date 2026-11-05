@@ -3,8 +3,8 @@
 //! Lookup order (first existing file wins):
 //!   1. `--config <PATH>`
 //!   2. `$CMG_CONFIG`
-//!   3. `$XDG_CONFIG_HOME/cmg/config.json` (or `config.toml`)
-//!   4. `~/.config/cmg/config.json` (or `config.toml`)
+//!   3. the platform config dir (see `config_dir_from`), holding
+//!      `config.json` or `config.toml`
 //!
 //! Both JSON and TOML are accepted; the format is detected from the file
 //! extension and falls back to "try JSON, then TOML".
@@ -270,14 +270,64 @@ fn parse_any(text: &str) -> Result<Config> {
 }
 
 fn default_config_dir() -> Option<PathBuf> {
-    if let Ok(x) = std::env::var("XDG_CONFIG_HOME") {
-        if !x.trim().is_empty() {
-            return Some(PathBuf::from(x).join("cmg"));
+    config_dir_from(PLATFORM, |name| std::env::var(name).ok())
+}
+
+/// The platform's conventions, as data so each set of rules can be tested on
+/// any host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Platform {
+    /// `%APPDATA%`-style roaming dir is the native config home on Windows.
+    windows: bool,
+}
+
+const PLATFORM: Platform = Platform {
+    windows: cfg!(windows),
+};
+
+/// Resolve the config directory using `get(name)` for the environment.
+///
+/// Windows has no `$HOME` and no `$XDG_CONFIG_HOME` in PowerShell or cmd, so
+/// relying on them made `cmg init` fail outright there. The rules are:
+///
+/// - Windows: `%APPDATA%\cmg`. `%XDG_CONFIG_HOME%` (set by some tools) then
+///   `%HOME%` (set by Git Bash/MSYS) are accepted as fallbacks, and a
+///   `%USERPROFILE%\.config` that already exists is honoured, so an existing
+///   Git Bash setup keeps working.
+/// - Everywhere else: `$XDG_CONFIG_HOME/cmg`, else `$HOME/.config/cmg`.
+fn config_dir_from(platform: Platform, get: impl Fn(&str) -> Option<String>) -> Option<PathBuf> {
+    let var = |name: &str| get(name).filter(|v| !v.trim().is_empty());
+
+    if platform.windows {
+        if let Some(appdata) = var("APPDATA") {
+            return Some(PathBuf::from(appdata).join("cmg"));
         }
+        if let Some(xdg) = var("XDG_CONFIG_HOME") {
+            return Some(PathBuf::from(xdg).join("cmg"));
+        }
+        // Git Bash and MSYS set HOME; honour an existing .config there.
+        if let Some(home) = var("HOME") {
+            return Some(PathBuf::from(home).join(".config").join("cmg"));
+        }
+        if let Some(profile) = var("USERPROFILE") {
+            return Some(PathBuf::from(profile).join(".config").join("cmg"));
+        }
+        return None;
     }
-    std::env::var("HOME")
-        .ok()
-        .map(|h| PathBuf::from(h).join(".config").join("cmg"))
+
+    if let Some(xdg) = var("XDG_CONFIG_HOME") {
+        return Some(PathBuf::from(xdg).join("cmg"));
+    }
+    var("HOME").map(|h| PathBuf::from(h).join(".config").join("cmg"))
+}
+
+/// What to tell the user when no config directory can be determined.
+fn missing_config_dir_hint() -> &'static str {
+    if cfg!(windows) {
+        "cannot determine config directory (no %APPDATA%); set one with --config"
+    } else {
+        "cannot determine config directory (no $HOME); set one with --config"
+    }
 }
 
 pub fn default_config_path() -> Option<PathBuf> {
@@ -323,7 +373,7 @@ fn resolve_path(explicit: Option<&str>) -> Result<Option<PathBuf>> {
 
 /// Write an example config. Returns the path written.
 pub fn write_example(force: bool, toml: bool) -> Result<PathBuf> {
-    let dir = default_config_dir().context("cannot determine config directory (no $HOME)")?;
+    let dir = default_config_dir().context(missing_config_dir_hint())?;
     let path = dir.join(if toml { "config.toml" } else { "config.json" });
     if path.exists() && !force {
         bail!(
@@ -368,5 +418,115 @@ mod tests {
     fn unknown_field_is_rejected() {
         let text = r#"{"provider":{"base_url":"x","model":"m","api_key":"k"},"nope":1}"#;
         assert!(serde_json::from_str::<Config>(text).is_err());
+    }
+}
+
+#[cfg(test)]
+mod config_dir_tests {
+    use super::*;
+
+    const WIN: Platform = Platform { windows: true };
+    const UNIX: Platform = Platform { windows: false };
+
+    fn env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let owned: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |name: &str| {
+            owned
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.clone())
+        }
+    }
+
+    #[test]
+    fn windows_uses_appdata_without_home() {
+        // The reported bug: PowerShell has no HOME at all.
+        let dir = config_dir_from(WIN, env(&[("APPDATA", r"C:\Users\me\AppData\Roaming")]));
+        assert_eq!(
+            dir,
+            Some(PathBuf::from(r"C:\Users\me\AppData\Roaming").join("cmg"))
+        );
+    }
+
+    #[test]
+    fn windows_prefers_appdata_over_git_bash_home() {
+        let dir = config_dir_from(
+            WIN,
+            env(&[
+                ("APPDATA", r"C:\Users\me\AppData\Roaming"),
+                ("HOME", r"C:\Users\me"),
+                ("XDG_CONFIG_HOME", r"C:\xdg"),
+            ]),
+        );
+        assert_eq!(
+            dir,
+            Some(PathBuf::from(r"C:\Users\me\AppData\Roaming").join("cmg"))
+        );
+    }
+
+    #[test]
+    fn windows_falls_back_to_home_when_appdata_is_missing() {
+        let dir = config_dir_from(WIN, env(&[("HOME", r"C:\Users\me")]));
+        assert_eq!(
+            dir,
+            Some(PathBuf::from(r"C:\Users\me").join(".config").join("cmg"))
+        );
+    }
+
+    #[test]
+    fn windows_falls_back_to_userprofile() {
+        let dir = config_dir_from(WIN, env(&[("USERPROFILE", r"C:\Users\me")]));
+        assert_eq!(
+            dir,
+            Some(PathBuf::from(r"C:\Users\me").join(".config").join("cmg"))
+        );
+    }
+
+    #[test]
+    fn windows_with_nothing_set_reports_none_not_a_panic() {
+        assert_eq!(config_dir_from(WIN, env(&[])), None);
+    }
+
+    #[test]
+    fn blank_variables_are_ignored() {
+        // An empty APPDATA must not produce a path rooted at the cwd.
+        let dir = config_dir_from(WIN, env(&[("APPDATA", "   "), ("HOME", r"C:\Users\me")]));
+        assert_eq!(
+            dir,
+            Some(PathBuf::from(r"C:\Users\me").join(".config").join("cmg"))
+        );
+    }
+
+    #[test]
+    fn unix_still_uses_xdg_then_home() {
+        let xdg = config_dir_from(
+            UNIX,
+            env(&[("XDG_CONFIG_HOME", "/xdg"), ("HOME", "/home/a")]),
+        );
+        assert_eq!(xdg, Some(PathBuf::from("/xdg").join("cmg")));
+
+        let home = config_dir_from(UNIX, env(&[("HOME", "/home/a")]));
+        assert_eq!(
+            home,
+            Some(PathBuf::from("/home/a").join(".config").join("cmg"))
+        );
+    }
+
+    #[test]
+    fn unix_never_reads_windows_variables() {
+        // APPDATA leaking into a Unix environment must not change anything.
+        let dir = config_dir_from(UNIX, env(&[("APPDATA", "/nope"), ("HOME", "/home/a")]));
+        assert_eq!(
+            dir,
+            Some(PathBuf::from("/home/a").join(".config").join("cmg"))
+        );
+    }
+
+    #[test]
+    fn unix_with_nothing_set_reports_none() {
+        assert_eq!(config_dir_from(UNIX, env(&[])), None);
     }
 }

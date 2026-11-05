@@ -24,6 +24,11 @@ daemon. If a change makes the tool heavier or chattier, it is probably wrong.
 5. **Config is data, not code.** New settings belong in `src/config.rs` with a
    `#[serde(default)]` so existing config files keep working. Keep the JSON and
    TOML examples (`EXAMPLE_JSON` / `EXAMPLE_TOML`) in sync with the structs.
+   Config discovery must follow the host's conventions: Windows has no `$HOME`
+   or `$XDG_CONFIG_HOME` in PowerShell/cmd, so it uses `%APPDATA%\cmg`. The
+   rules live in `config_dir_from`, which takes the environment as a parameter
+   so every platform's behaviour is unit-tested on any host. The
+   `windows-smoke` CI job covers the real thing.
 6. **Secrets never go to stderr.** Do not echo API keys or full request bodies
    in error paths.
 

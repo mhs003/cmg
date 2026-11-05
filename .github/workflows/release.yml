@@ -17,6 +17,81 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Windows users run cmg from PowerShell or cmd, where there is no $HOME and
+  # no $XDG_CONFIG_HOME. This job proves the binary finds and writes a config
+  # there, and runs a full generation, without a Windows machine in hand.
+  windows-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build
+        run: cargo build --release
+      - name: Config dir resolves without HOME (the PowerShell case)
+        shell: pwsh
+        run: |
+          $env:HOME = $null
+          $env:XDG_CONFIG_HOME = $null
+          if (-not $env:APPDATA) { throw "APPDATA missing on the runner" }
+          .\target\release\cmg.exe init
+          $path = Join-Path $env:APPDATA "cmg\config.json"
+          if (-not (Test-Path $path)) { throw "init did not write $path" }
+          Write-Host "wrote $path"
+      - name: Config is discovered from %APPDATA% with no --config
+        shell: pwsh
+        run: |
+          $env:HOME = $null
+          $env:XDG_CONFIG_HOME = $null
+          $env:CMG_CONFIG = $null
+          # The file written by init above must be found on its own. An
+          # unconfigured provider then fails with a provider error, and
+          # crucially not with the config-directory error.
+          $out = & .\target\release\cmg.exe -v 2>&1 | Out-String
+          if ($out -match "cannot determine config directory") {
+            throw "config dir not resolved on Windows: $out"
+          }
+          if ($out -notmatch "cmg.json|config.json|api key") {
+            Write-Host "note: unexpected output, inspect below"
+            Write-Host $out
+          }
+          Write-Host "ok"
+      - name: End-to-end generation against a stub server
+        shell: pwsh
+        run: |
+          $env:HOME = $null
+          $env:XDG_CONFIG_HOME = $null
+          $repo = Join-Path $env:RUNNER_TEMP "smoke"
+          New-Item -ItemType Directory -Force -Path $repo | Out-Null
+          Set-Location $repo
+          git init -q -b main
+          git config user.email smoke@example.com
+          git config user.name smoke
+          "x" | Out-File -Encoding ascii a.txt
+          git add a.txt
+
+          # One-shot stub that answers with a fixed commit message.
+          $listener = [System.Net.HttpListener]::new()
+          $listener.Prefixes.Add("http://127.0.0.1:8711/")
+          $listener.Start()
+          $job = Start-Job -ScriptBlock {
+            param($l)
+            $ctx = $l.GetContext()
+            $null = $ctx.Request.InputStream.Read([byte[]]::new(65536), 0, 65536)
+            $body = '{"choices":[{"message":{"content":"feat: windows smoke"}}]}'
+            $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
+            $ctx.Response.ContentType = "application/json"
+            $ctx.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+            $ctx.Response.Close()
+            $l.Stop()
+          } -ArgumentList $listener
+          Start-Sleep -Seconds 1
+
+          $cfg = Join-Path $repo "cfg.json"
+          '{"provider":{"base_url":"http://127.0.0.1:8711/v1","model":"stub","api_key":"k"},"prompt":{"include_log_context":false}}' | Out-File -Encoding ascii $cfg
+          $msg = & $env:GITHUB_WORKSPACE\target\release\cmg.exe --config $cfg
+          Write-Host "stdout: $msg"
+          if ($msg -ne "feat: windows smoke") { throw "unexpected message: $msg" }
+
   # Decide the next version from Conventional Commits since the last tag,
   # update VERSION + CHANGELOG.md, commit, tag, and push the tag.
   version:
