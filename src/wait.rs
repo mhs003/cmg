@@ -62,8 +62,7 @@ pub fn review(message: &str) -> Result<Outcome> {
     let color = color_enabled();
 
     writeln!(stderr)?;
-    render_turn(&mut stderr, "Generated commit suggestion:", message, color)?;
-    writeln!(stderr)?;
+    render_agent_turn(&mut stderr, "suggesting commit message", message, color)?;
     stderr.flush()?;
 
     match menu(color)? {
@@ -79,50 +78,61 @@ pub fn review(message: &str) -> Result<Outcome> {
     }
 }
 
-/// Render one message block: a labelled gutter, then the text indented under
-/// it. The label is what carries the meaning; colour just reinforces it.
-fn render_turn(out: &mut impl Write, label: &str, body: &str, color: bool) -> Result<()> {
-    let mut lines = body.lines();
-    let first = lines.next().unwrap_or("");
+/// Bullet that opens a turn, and the rail that runs down its body.
+const BULLET: &str = "●";
+const RAIL: &str = "│";
+const USER_LABEL: &str = "you ›";
 
+/// Render a turn from the agent: a bullet, a "what it is doing" line, then the
+/// reply hanging off a rail.
+///
+/// The rail is what makes consecutive turns read as one flow instead of a
+/// stack of unrelated blocks. It is part of the plain text, so the shape is
+/// identical with colour off.
+fn render_agent_turn(out: &mut impl Write, action: &str, body: &str, color: bool) -> Result<()> {
     write!(out, "  ")?;
     if color {
-        queue!(
-            out,
-            // The user's own turn is the one that stands out; the model's
-            // label stays muted so the message itself draws the eye.
-            SetForegroundColor(if is_user_turn(label) {
-                Color::DarkCyan
-            } else {
-                Color::DarkGrey
-            })
-        )?;
+        queue!(out, SetForegroundColor(Color::DarkCyan))?;
     }
-    write!(out, "{label}")?;
+    write!(out, "{BULLET}")?;
     if color {
         queue!(out, ResetColor)?;
     }
-    writeln!(out)?;
-
-    // Blank line between the label and a multi-line body so a long message
-    // does not turn into an unreadable block.
-    if body.lines().count() > 1 {
-        writeln!(out)?;
+    if color {
+        queue!(out, SetForegroundColor(Color::DarkGrey))?;
+    }
+    writeln!(out, " agent › {action}")?;
+    if color {
+        queue!(out, ResetColor)?;
     }
 
+    match rail(out, color) {
+        Ok(()) => {}
+        Err(e) => return Err(e),
+    }
+
+    let mut lines = body.lines();
+    let first = lines.next().unwrap_or("");
     write_commit_line(out, first, true, color)?;
     for line in lines {
         // Preserve blank lines inside the body, and keep bullet indentation.
         write_commit_line(out, line, false, color)?;
     }
+    rail(out, color)?;
     Ok(())
 }
 
-/// The label printed for the user's feedback line.
-const USER_LABEL: &str = "you ›";
-
-fn is_user_turn(label: &str) -> bool {
-    label == USER_LABEL
+/// A rail-only line, closing or continuing a turn.
+fn rail(out: &mut impl Write, color: bool) -> Result<()> {
+    write!(out, "  ")?;
+    if color {
+        queue!(out, SetForegroundColor(Color::DarkGrey))?;
+        writeln!(out, "{RAIL}")?;
+        queue!(out, ResetColor)?;
+    } else {
+        writeln!(out, "{RAIL}")?;
+    }
+    Ok(())
 }
 
 /// Write one line of a commit message, styling only the Conventional Commits
@@ -134,21 +144,26 @@ fn write_commit_line(
     is_subject: bool,
     color: bool,
 ) -> Result<()> {
+    // `│  ` keeps every body line inside the turn's rail. A blank line gets
+    // the rail alone, with no trailing spaces.
     if !is_subject {
-        writeln!(out, "    {line}")?;
+        if line.trim().is_empty() {
+            writeln!(out, "  {RAIL}")?;
+        } else {
+            writeln!(out, "  {RAIL}  {line}")?;
+        }
         return Ok(());
     }
 
     match split_prefix(line) {
         Some((prefix, rest)) if color => {
-            // type(scope)!:  in bold, scope in a muted colour, rest plain.
-            writeln!(out, "  ")?;
+            write!(out, "  {RAIL}  ")?;
             let _ = queue!(out, SetAttribute(Attribute::Bold));
-            write!(out, "    {prefix}")?;
+            write!(out, "{prefix}")?;
             let _ = queue!(out, SetAttribute(Attribute::Reset));
             writeln!(out, "{rest}")?;
         }
-        _ => writeln!(out, "    {line}")?,
+        _ => writeln!(out, "  {RAIL}  {line}")?,
     }
     Ok(())
 }
@@ -187,7 +202,8 @@ fn menu(color: bool) -> Result<Choice> {
             // no state is carried over between frames.
             queue!(stderr, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
 
-            // A short left margin keeps the menu aligned with the transcript.
+            // Same two-space margin as the turns, so the menu lines up under
+            // the rail instead of floating at its own indent.
             queue!(stderr, Print("  "))?;
             for (i, (label, _)) in OPTIONS.iter().enumerate() {
                 if i > 0 {
@@ -220,7 +236,7 @@ fn menu(color: bool) -> Result<Choice> {
             if color {
                 queue!(stderr, SetForegroundColor(Color::DarkGrey))?;
             }
-            queue!(stderr, Print("  arrows, enter, esc"))?;
+            queue!(stderr, Print("  ←/→ move · enter select · esc cancel"))?;
             if color {
                 queue!(stderr, ResetColor)?;
             }
@@ -280,10 +296,11 @@ fn menu(color: bool) -> Result<Choice> {
 /// as a cancel so the caller does not burn a request.
 fn read_feedback(color: bool) -> Result<Option<String>> {
     let mut stderr = io::stderr();
+    write!(stderr, "  ")?;
     if color {
         queue!(stderr, SetForegroundColor(Color::DarkCyan))?;
     }
-    write!(stderr, "  you ›")?;
+    write!(stderr, "{BULLET} {USER_LABEL}")?;
     if color {
         queue!(stderr, ResetColor)?;
     }
@@ -335,16 +352,50 @@ mod tests {
     #[test]
     fn plain_rendering_has_no_escape_codes() {
         let mut buf = Vec::new();
-        render_turn(
+        render_agent_turn(
             &mut buf,
-            "Generated commit suggestion:",
+            "suggesting commit message",
             "feat: x\n\nbody",
             false,
         )
         .unwrap();
         let s = String::from_utf8(buf).unwrap();
         assert!(!s.contains('\u{1b}'), "plain output leaked escapes: {s:?}");
-        assert!(s.contains("Generated commit suggestion:"));
+        assert!(s.contains("agent › suggesting commit message"));
         assert!(s.contains("feat: x"));
+    }
+}
+
+#[cfg(test)]
+mod plain_tests {
+    use super::*;
+
+    #[test]
+    fn agent_turn_shape_survives_without_colour() {
+        let mut buf = Vec::new();
+        render_agent_turn(
+            &mut buf,
+            "suggesting commit message",
+            "feat: x\n\nbody",
+            false,
+        )
+        .unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert_eq!(
+            s,
+            "  ● agent › suggesting commit message\n  │\n  │  feat: x\n  │\n  │  body\n  │\n"
+        );
+        assert!(!s.contains('\u{1b}'));
+    }
+
+    #[test]
+    fn plain_turn_keeps_blank_lines_inside_the_rail() {
+        let mut buf = Vec::new();
+        render_agent_turn(&mut buf, "revising", "fix: y\n\n- one\n\n- two", false).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        // A blank line in the body must not break the rail.
+        for line in s.lines().skip(1) {
+            assert!(line.starts_with("  │"), "line broke the rail: {line:?}");
+        }
     }
 }

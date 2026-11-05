@@ -70,9 +70,10 @@ terminal. Rules that keep it from becoming a TUI:
 - Raw mode is enabled only for the menu and always restored, even on error.
 - Prompts, the rendered message, and the menu go to **stderr**. stdout still
   receives only the message (the accepted one, or the rejected one on cancel).
-- Presentation is transcript-style: a labelled turn
-  (`Generated commit suggestion:` / `you ›`), never a box, an alternate
-  screen, or a full repaint.
+- Presentation is transcript-style: turns are a `● agent ›` / `● you ›`
+  bullet plus a `│` rail that runs down the body, so the flow reads as one
+  conversation. The rail and bullets are plain text, so the shape is identical
+  with colour off. Never a box, an alternate screen, or a full repaint.
 - Colour is decorative. Every state is also legible without it, and
   `NO_COLOR` / `TERM=dumb` / non-TTY stderr emit no colour at all
   (`tests` in `src/wait.rs` assert the plain path has no escape codes).
