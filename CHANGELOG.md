@@ -8,6 +8,18 @@ Entries are generated from Conventional Commits when a release is cut.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-05
+
+### Added
+
+- **spinner:** show the indicator in every mode
+- **wait:** render turns as an agent-style transcript
+
+### Other
+
+- **cli:** mute the deprecation warning label
+
+
 ## [0.5.0] - 2026-11-05
 
 ### Added
