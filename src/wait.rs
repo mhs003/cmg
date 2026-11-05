@@ -11,7 +11,7 @@
 //!   (labels, indentation, bold), and `NO_COLOR` / `TERM=dumb` turn it off.
 //! - Only the menu uses raw mode, and only for as long as it is on screen.
 
-use std::io::{self, BufRead, IsTerminal, Write};
+use std::io::{self, IsTerminal, Write};
 
 use anyhow::{bail, Context, Result};
 use crossterm::cursor::{Hide, MoveToColumn, Show};
@@ -88,6 +88,8 @@ pub fn review(message: &str) -> Result<Outcome> {
 const BULLET: &str = "●";
 const RAIL: &str = "│";
 const USER_LABEL: &str = "you ›";
+/// What the feedback prompt looks like before any typing.
+const PROMPT_PREFIX: &str = "  ● you ›";
 
 /// Render a turn from the agent: a bullet, a "what it is doing" line, then the
 /// reply hanging off a rail.
@@ -312,30 +314,241 @@ fn menu(color: bool) -> Result<Choice> {
     result
 }
 
-/// Read one line of feedback. Empty input means "no change", which we treat
-/// as a cancel so the caller does not burn a request.
-fn read_feedback(color: bool) -> Result<Option<String>> {
-    let mut stderr = io::stderr();
-    write!(stderr, "  ")?;
-    if color {
-        queue!(stderr, SetForegroundColor(Color::DarkCyan))?;
-    }
-    write!(stderr, "{BULLET} {USER_LABEL}")?;
-    if color {
-        queue!(stderr, ResetColor)?;
-    }
-    write!(stderr, " ")?;
-    stderr.flush()?;
+/// Read one line of feedback with line editing.
+///
+/// A plain `read_line` cannot do this: in cooked mode the arrows, Home/End and
+/// Ctrl/Alt+word bindings arrive as literal escape bytes (`^[[D`). Raw mode is
+/// enabled only while the prompt is up, then always restored.
+fn read_feedback(_color: bool) -> Result<Option<String>> {
+    // The prompt is drawn by the first redraw below, so there is one owner of
+    // what is on screen.
+    let line = edit_line()?;
+    Ok(if line.trim().is_empty() {
+        None
+    } else {
+        Some(line.trim().to_string())
+    })
+}
 
-    let mut line = String::new();
-    let stdin = io::stdin();
-    match stdin.lock().read_line(&mut line) {
-        Ok(0) => bail!("no feedback given (stdin closed)"),
-        Ok(_) => {}
-        Err(e) => bail!("reading feedback: {e}"),
+/// Line-editing state. Separate from the terminal so every movement rule can
+/// be tested without a TTY.
+#[derive(Default)]
+struct LineEditor {
+    chars: Vec<char>,
+    /// Cursor position as a char index, 0..=len.
+    at: usize,
+}
+
+impl LineEditor {
+    fn insert(&mut self, c: char) {
+        self.chars.insert(self.at, c);
+        self.at += 1;
     }
-    let text = line.trim().to_string();
-    Ok(if text.is_empty() { None } else { Some(text) })
+
+    fn backspace(&mut self) {
+        if self.at > 0 {
+            self.at -= 1;
+            self.chars.remove(self.at);
+        }
+    }
+
+    /// Ctrl-W / Alt-Backspace: delete the word before the cursor, including
+    /// the whitespace that precedes it, like a shell.
+    fn delete_word_back(&mut self) {
+        while self.at > 0 && self.chars[self.at - 1].is_whitespace() {
+            self.at -= 1;
+            self.chars.remove(self.at);
+        }
+        while self.at > 0 && !self.chars[self.at - 1].is_whitespace() {
+            self.at -= 1;
+            self.chars.remove(self.at);
+        }
+    }
+
+    /// Del key: delete the character under the cursor.
+    fn delete_forward(&mut self) {
+        if self.at < self.chars.len() {
+            self.chars.remove(self.at);
+        }
+    }
+
+    /// Ctrl-K: delete from the cursor to the end of the line.
+    fn kill_to_end(&mut self) {
+        self.chars.truncate(self.at);
+    }
+
+    /// Ctrl-U: delete from the start of the line to the cursor.
+    fn kill_to_start(&mut self) {
+        self.chars.drain(..self.at);
+        self.at = 0;
+    }
+
+    fn left(&mut self) {
+        self.at = self.at.saturating_sub(1);
+    }
+
+    fn right(&mut self) {
+        if self.at < self.chars.len() {
+            self.at += 1;
+        }
+    }
+
+    /// Alt-Left / Alt-B: move to the start of the previous word.
+    fn word_left(&mut self) {
+        while self.at > 0 && self.chars[self.at - 1].is_whitespace() {
+            self.at -= 1;
+        }
+        while self.at > 0 && !self.chars[self.at - 1].is_whitespace() {
+            self.at -= 1;
+        }
+    }
+
+    /// Alt-Right / Alt-F: move past the end of the current word.
+    fn word_right(&mut self) {
+        let len = self.chars.len();
+        while self.at < len && self.chars[self.at].is_whitespace() {
+            self.at += 1;
+        }
+        while self.at < len && !self.chars[self.at].is_whitespace() {
+            self.at += 1;
+        }
+    }
+
+    fn home(&mut self) {
+        self.at = 0;
+    }
+
+    fn end(&mut self) {
+        self.at = self.chars.len();
+    }
+
+    fn text(&self) -> String {
+        self.chars.iter().collect()
+    }
+}
+
+/// Outcome of one key press.
+enum Edit {
+    /// Keep editing.
+    Continue,
+    /// The user accepted the line.
+    Accept,
+    /// The user abandoned the line (Esc / Ctrl-C).
+    Cancel,
+}
+
+/// Redraw one line in place: carriage return, wipe, prompt, text, then place
+/// the cursor. Single-line only, so it needs no line counting.
+fn redraw_line(out: &mut impl Write, prefix: &str, editor: &LineEditor, color: bool) -> Result<()> {
+    queue!(
+        out,
+        MoveToColumn(0),
+        Clear(ClearType::CurrentLine),
+        Print(prefix)
+    )?;
+    if color {
+        queue!(out, SetForegroundColor(Color::DarkCyan))?;
+    }
+    queue!(out, Print(editor.text()))?;
+    if color {
+        queue!(out, ResetColor)?;
+    }
+    // Back up from the end of the text to the cursor.
+    let back = editor.chars.len() - editor.at;
+    if back > 0 {
+        queue!(out, crossterm::cursor::MoveLeft(back as u16))?;
+    }
+    out.flush()?;
+    Ok(())
+}
+
+/// Read a line with arrow-key editing. Returns `Err` if the line was abandoned.
+fn edit_line() -> Result<String> {
+    let mut editor = LineEditor::default();
+    let mut stderr = io::stderr();
+    // Exactly what the prompt looks like, so the first redraw is a clean
+    // in-place replacement rather than a second prompt.
+    let prefix = format!("{PROMPT_PREFIX} ");
+
+    enable_raw_mode().context("enabling raw mode (is stderr a terminal?)")?;
+    let result = (|| -> Result<String> {
+        loop {
+            redraw_line(&mut stderr, &prefix, &editor, color_enabled())?;
+            let edit = match event::read()? {
+                Event::Key(key) if key.kind != KeyEventKind::Release => {
+                    apply_key(&mut editor, key.code, key.modifiers)
+                }
+                // Ignore mouse, resize, focus and paste events.
+                _ => Edit::Continue,
+            };
+            match edit {
+                Edit::Continue => {}
+                Edit::Accept => {
+                    // Leave the finished line on screen and move below it.
+                    redraw_line(
+                        &mut stderr,
+                        &prefix,
+                        &editor_with_cursor_at_end(&editor),
+                        color_enabled(),
+                    )?;
+                    queue!(stderr, Print("\r\n"))?;
+                    stderr.flush()?;
+                    return Ok(editor.text());
+                }
+                Edit::Cancel => {
+                    // Break the line first, or the caller's message lands on
+                    // top of the half-typed text.
+                    queue!(stderr, Print("\r\n"))?;
+                    stderr.flush()?;
+                    bail!("no feedback given");
+                }
+            }
+        }
+    })();
+    let _ = disable_raw_mode();
+    result
+}
+
+/// The accepted line is redrawn with the cursor at the end so it does not sit
+/// mid-text after Enter.
+fn editor_with_cursor_at_end(e: &LineEditor) -> LineEditor {
+    LineEditor {
+        chars: e.chars.clone(),
+        at: e.chars.len(),
+    }
+}
+
+fn apply_key(editor: &mut LineEditor, code: KeyCode, mods: KeyModifiers) -> Edit {
+    // Alt+Backspace / Alt+arrow move or delete by word, as in readline.
+    let word = mods.contains(KeyModifiers::ALT);
+    match code {
+        KeyCode::Enter => return Edit::Accept,
+        KeyCode::Esc => return Edit::Cancel,
+        KeyCode::Char('c') if mods.contains(KeyModifiers::CONTROL) => return Edit::Cancel,
+        KeyCode::Char('d') if mods.contains(KeyModifiers::CONTROL) && editor.chars.is_empty() => {
+            return Edit::Cancel
+        }
+        KeyCode::Char('a') if mods.contains(KeyModifiers::CONTROL) => editor.home(),
+        KeyCode::Char('e') if mods.contains(KeyModifiers::CONTROL) => editor.end(),
+        KeyCode::Char('b') if mods.contains(KeyModifiers::CONTROL) => editor.left(),
+        KeyCode::Char('f') if mods.contains(KeyModifiers::CONTROL) => editor.right(),
+        KeyCode::Char('w') if mods.contains(KeyModifiers::CONTROL) => editor.delete_word_back(),
+        KeyCode::Char('k') if mods.contains(KeyModifiers::CONTROL) => editor.kill_to_end(),
+        KeyCode::Char('u') if mods.contains(KeyModifiers::CONTROL) => editor.kill_to_start(),
+        KeyCode::Char(_) if mods.contains(KeyModifiers::CONTROL) => {}
+        KeyCode::Char(c) => editor.insert(c),
+        KeyCode::Backspace if word => editor.delete_word_back(),
+        KeyCode::Backspace => editor.backspace(),
+        KeyCode::Delete => editor.delete_forward(),
+        KeyCode::Left if word => editor.word_left(),
+        KeyCode::Left => editor.left(),
+        KeyCode::Right if word => editor.word_right(),
+        KeyCode::Right => editor.right(),
+        KeyCode::Home => editor.home(),
+        KeyCode::End => editor.end(),
+        _ => {}
+    }
+    Edit::Continue
 }
 
 #[cfg(test)]
@@ -432,5 +645,168 @@ mod user_turn_tests {
             String::from_utf8(buf).unwrap(),
             "  ● you › generate another\n"
         );
+    }
+}
+
+#[cfg(test)]
+mod editor_tests {
+    use super::*;
+
+    fn typed(s: &str) -> LineEditor {
+        let mut e = LineEditor::default();
+        for c in s.chars() {
+            e.insert(c);
+        }
+        e
+    }
+
+    #[test]
+    fn typing_inserts_at_the_cursor_not_the_end() {
+        let mut e = typed("ac");
+        e.left();
+        e.insert('b');
+        assert_eq!(e.text(), "abc");
+        assert_eq!(e.at, 2);
+    }
+
+    #[test]
+    fn arrows_move_and_clamp_at_the_edges() {
+        let mut e = typed("abc");
+        e.left();
+        e.left();
+        e.left();
+        e.left(); // already at the start
+        assert_eq!(e.at, 0);
+        e.end();
+        e.right(); // already at the end
+        assert_eq!(e.at, 3);
+    }
+
+    #[test]
+    fn home_and_end_jump() {
+        let mut e = typed("hello");
+        e.home();
+        assert_eq!(e.at, 0);
+        e.end();
+        assert_eq!(e.at, 5);
+    }
+
+    #[test]
+    fn backspace_deletes_before_the_cursor() {
+        let mut e = typed("abc");
+        e.left();
+        e.backspace();
+        assert_eq!(e.text(), "ac");
+        assert_eq!(e.at, 1);
+    }
+
+    #[test]
+    fn backspace_at_the_start_does_nothing() {
+        let mut e = typed("ab");
+        e.home();
+        e.backspace();
+        assert_eq!(e.text(), "ab");
+        assert_eq!(e.at, 0);
+    }
+
+    #[test]
+    fn delete_removes_the_character_under_the_cursor() {
+        let mut e = typed("abc");
+        e.home();
+        e.delete_forward();
+        assert_eq!(e.text(), "bc");
+        assert_eq!(e.at, 0);
+    }
+
+    #[test]
+    fn cursor_movement_keycodes_are_wired_up() {
+        let mut e = typed("one two");
+        // Ctrl-A / Ctrl-E
+        apply_key(&mut e, KeyCode::Char('a'), KeyModifiers::CONTROL);
+        assert_eq!(e.at, 0);
+        apply_key(&mut e, KeyCode::Char('e'), KeyModifiers::CONTROL);
+        assert_eq!(e.at, 7);
+        // Left/Right
+        apply_key(&mut e, KeyCode::Left, KeyModifiers::NONE);
+        assert_eq!(e.at, 6);
+        apply_key(&mut e, KeyCode::Home, KeyModifiers::NONE);
+        assert_eq!(e.at, 0);
+    }
+
+    #[test]
+    fn alt_arrows_move_by_word() {
+        let mut e = typed("one two three");
+        apply_key(&mut e, KeyCode::Left, KeyModifiers::ALT);
+        assert_eq!(e.at, 8, "should land at the start of \"three\"");
+        apply_key(&mut e, KeyCode::Left, KeyModifiers::ALT);
+        assert_eq!(e.at, 4, "should land at the start of \"two\"");
+        apply_key(&mut e, KeyCode::Right, KeyModifiers::ALT);
+        assert_eq!(e.at, 7, "should land past the end of \"two\"");
+    }
+
+    #[test]
+    fn alt_backspace_and_ctrl_w_delete_a_word() {
+        let mut e = typed("fix the parser");
+        apply_key(&mut e, KeyCode::Backspace, KeyModifiers::ALT);
+        assert_eq!(e.text(), "fix the ");
+        apply_key(&mut e, KeyCode::Char('w'), KeyModifiers::CONTROL);
+        assert_eq!(e.text(), "fix ");
+        apply_key(&mut e, KeyCode::Char('w'), KeyModifiers::CONTROL);
+        assert_eq!(e.text(), "");
+    }
+
+    #[test]
+    fn ctrl_k_and_ctrl_u_kill_to_the_edges() {
+        let mut e = typed("hello world");
+        e.at = 5;
+        e.kill_to_end();
+        assert_eq!(e.text(), "hello");
+        e.kill_to_start();
+        assert_eq!(e.text(), "");
+        assert_eq!(e.at, 0);
+    }
+
+    #[test]
+    fn enter_accepts_and_escape_cancels() {
+        let mut e = typed("x");
+        assert!(matches!(
+            apply_key(&mut e, KeyCode::Enter, KeyModifiers::NONE),
+            Edit::Accept
+        ));
+        assert!(matches!(
+            apply_key(&mut e, KeyCode::Esc, KeyModifiers::NONE),
+            Edit::Cancel
+        ));
+        assert!(matches!(
+            apply_key(&mut e, KeyCode::Char('c'), KeyModifiers::CONTROL),
+            Edit::Cancel
+        ));
+    }
+
+    #[test]
+    fn ctrl_d_cancels_only_on_an_empty_line() {
+        let mut e = LineEditor::default();
+        assert!(matches!(
+            apply_key(&mut e, KeyCode::Char('d'), KeyModifiers::CONTROL),
+            Edit::Cancel
+        ));
+        let mut e = typed("text");
+        assert!(matches!(
+            apply_key(&mut e, KeyCode::Char('d'), KeyModifiers::CONTROL),
+            Edit::Continue
+        ));
+        assert_eq!(e.text(), "text");
+    }
+
+    #[test]
+    fn cursor_is_reported_in_chars_not_bytes() {
+        // A multi-byte glyph must not shift the cursor by its byte length.
+        let mut e = typed("héllo");
+        e.home();
+        e.right();
+        e.right();
+        assert_eq!(e.at, 2);
+        e.insert('X');
+        assert_eq!(e.text(), "héXllo");
     }
 }

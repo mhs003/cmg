@@ -82,6 +82,11 @@ terminal. Rules that keep it from becoming a TUI:
   feedback refines the same message; `generate another` truncates back to the
   original diff turn.
 
+The feedback prompt is a raw-mode line editor (`LineEditor` in `wait.rs`), not
+`read_line`: cooked mode turns arrow keys into literal `^[[D` bytes. It supports
+the readline bindings people expect — arrows, Home/End, Ctrl-A/E/B/F, Ctrl-K/U/W,
+Alt+arrows, Alt+Backspace — and unit tests cover each one without a TTY.
+
 ## Style
 
 - Rust 2021, `rustfmt` defaults, `cargo clippy --all-targets` clean.
