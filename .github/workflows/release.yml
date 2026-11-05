@@ -47,6 +47,10 @@ jobs:
           # unconfigured provider then fails with a provider error, and
           # crucially not with the config-directory error.
           $out = & .\target\release\cmg.exe -v 2>&1 | Out-String
+          # cmg exits 1 here (the example config has no API key), and pwsh
+          # fails the whole step on a non-zero $LASTEXITCODE. Reset it: the
+          # assertions below are what decide pass or fail.
+          $LASTEXITCODE = 0
           if ($out -match "cannot determine config directory") {
             throw "config dir not resolved on Windows: $out"
           }
@@ -89,7 +93,9 @@ jobs:
           $cfg = Join-Path $repo "cfg.json"
           '{"provider":{"base_url":"http://127.0.0.1:8711/v1","model":"stub","api_key":"k"},"prompt":{"include_log_context":false}}' | Out-File -Encoding ascii $cfg
           $msg = & $env:GITHUB_WORKSPACE\target\release\cmg.exe --config $cfg
-          Write-Host "stdout: $msg"
+          $code = $LASTEXITCODE
+          Write-Host "stdout: $msg (exit $code)"
+          if ($code -ne 0) { throw "cmg exited $code" }
           if ($msg -ne "feat: windows smoke") { throw "unexpected message: $msg" }
 
   # Decide the next version from Conventional Commits since the last tag,
