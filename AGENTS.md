@@ -81,6 +81,9 @@ terminal. Rules that keep it from becoming a TUI:
 - `feedback` keeps the conversation history (`llm::ChatMessage`), so repeated
   feedback refines the same message; `generate another` truncates back to the
   original diff turn.
+- Ctrl-C (or Esc) in the feedback prompt returns to the menu with the current
+  message untouched; it is "back", not "quit". Only cancelling on the menu
+  itself ends the run.
 
 The feedback prompt is a raw-mode line editor (`LineEditor` in `wait.rs`), not
 `read_line`: cooked mode turns arrow keys into literal `^[[D` bytes. It supports

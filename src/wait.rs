@@ -13,7 +13,7 @@
 
 use std::io::{self, IsTerminal, Write};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use crossterm::cursor::{Hide, MoveToColumn, Show};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 use crossterm::queue;
@@ -65,22 +65,28 @@ pub fn review(message: &str) -> Result<Outcome> {
     render_agent_turn(&mut stderr, "suggesting commit message", message, color)?;
     stderr.flush()?;
 
-    match menu(color)? {
-        Choice::Commit => Ok(Outcome::Commit),
-        Choice::Cancel => Ok(Outcome::Cancel),
-        Choice::Regenerate => {
-            // Echo the choice as a turn: otherwise the new message appears with
-            // no sign of what produced it.
-            render_user_action(&mut stderr, "generate another", color)?;
-            stderr.flush()?;
-            Ok(Outcome::Regenerate)
+    // The menu is re-entered after a feedback prompt is abandoned, so Ctrl-C
+    // there means "back", not "quit the whole run".
+    loop {
+        match menu(color)? {
+            Choice::Commit => return Ok(Outcome::Commit),
+            Choice::Cancel => return Ok(Outcome::Cancel),
+            Choice::Regenerate => {
+                // Echo the choice as a turn: otherwise the new message appears
+                // with no sign of what produced it.
+                render_user_action(&mut stderr, "generate another", color)?;
+                stderr.flush()?;
+                return Ok(Outcome::Regenerate);
+            }
+            Choice::Feedback => match read_feedback(color)? {
+                // No echo here: the terminal already showed the line the user
+                // typed next to the prompt.
+                Some(text) => return Ok(Outcome::Feedback(text)),
+                // Ctrl-C / Esc in the editor: drop the half-typed line and
+                // return to the choices with the current message untouched.
+                None => continue,
+            },
         }
-        Choice::Feedback => match read_feedback(color)? {
-            // No echo here: the terminal already showed the line the user
-            // typed next to the prompt.
-            Some(text) => Ok(Outcome::Feedback(text)),
-            None => Ok(Outcome::Cancel),
-        },
     }
 }
 
@@ -321,8 +327,11 @@ fn menu(color: bool) -> Result<Choice> {
 /// enabled only while the prompt is up, then always restored.
 fn read_feedback(_color: bool) -> Result<Option<String>> {
     // The prompt is drawn by the first redraw below, so there is one owner of
-    // what is on screen.
-    let line = edit_line()?;
+    // what is on screen. `None` means the prompt was abandoned (Ctrl-C, Esc, or
+    // an empty line): the caller goes back to the menu.
+    let Some(line) = edit_line()? else {
+        return Ok(None);
+    };
     Ok(if line.trim().is_empty() {
         None
     } else {
@@ -462,8 +471,12 @@ fn redraw_line(out: &mut impl Write, prefix: &str, editor: &LineEditor, color: b
     Ok(())
 }
 
-/// Read a line with arrow-key editing. Returns `Err` if the line was abandoned.
-fn edit_line() -> Result<String> {
+/// Read a line with arrow-key editing.
+///
+/// `Ok(None)` means the user abandoned the line (Ctrl-C / Esc / Ctrl-D on an
+/// empty line). That is a normal outcome, not an error: the caller decides
+/// whether it means "go back" or "quit".
+fn edit_line() -> Result<Option<String>> {
     let mut editor = LineEditor::default();
     let mut stderr = io::stderr();
     // Exactly what the prompt looks like, so the first redraw is a clean
@@ -471,7 +484,7 @@ fn edit_line() -> Result<String> {
     let prefix = format!("{PROMPT_PREFIX} ");
 
     enable_raw_mode().context("enabling raw mode (is stderr a terminal?)")?;
-    let result = (|| -> Result<String> {
+    let result = (|| -> Result<Option<String>> {
         loop {
             redraw_line(&mut stderr, &prefix, &editor, color_enabled())?;
             let edit = match event::read()? {
@@ -493,14 +506,14 @@ fn edit_line() -> Result<String> {
                     )?;
                     queue!(stderr, Print("\r\n"))?;
                     stderr.flush()?;
-                    return Ok(editor.text());
+                    return Ok(Some(editor.text()));
                 }
                 Edit::Cancel => {
-                    // Break the line first, or the caller's message lands on
-                    // top of the half-typed text.
+                    // Move off the half-typed line so the menu redraws below
+                    // it instead of overwriting it in place.
                     queue!(stderr, Print("\r\n"))?;
                     stderr.flush()?;
-                    bail!("no feedback given");
+                    return Ok(None);
                 }
             }
         }
