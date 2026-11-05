@@ -8,6 +8,19 @@ Entries are generated from Conventional Commits when a release is cut.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-05
+
+### Added
+
+- **cli:** list init under a Commands section
+- **cli:** show the config path in -V and make init's --toml discoverable
+
+### Other
+
+- replace the smoke stub's HttpListener with a TcpListener
+- stop the windows smoke step failing on cmg's exit code
+
+
 ## [0.6.2] - 2026-11-05
 
 ### Fixed
