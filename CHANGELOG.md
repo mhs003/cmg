@@ -8,6 +8,13 @@ Entries are generated from Conventional Commits when a release is cut.
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-05
+
+### Fixed
+
+- **config:** find the config on Windows via %APPDATA%
+
+
 ## [0.6.1] - 2026-11-05
 
 ### Fixed
