@@ -18,6 +18,8 @@ use std::process::ExitCode;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
+use crossterm::queue;
+use crossterm::style::{Color, Print, ResetColor, SetForegroundColor};
 
 use cli::{Cli, TargetMode};
 use config::{Config, DiffConfig};
@@ -35,11 +37,7 @@ fn main() -> ExitCode {
     // typed and what replaced it. Resolved after parsing so a rejected command
     // line does not also print a deprecation note.
     for flag in cli::deprecated_flags(&args) {
-        eprintln!(
-            "cmg: warning: `{flag}` is deprecated and will be removed in a future \
-             version; use {} instead",
-            cli::PREFERRED_FLAG
-        );
+        warn_deprecated(flag);
     }
     match run(&cli) {
         Ok(()) => ExitCode::SUCCESS,
@@ -72,6 +70,30 @@ fn init_command(args: &[String]) -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Print a deprecation note. Only the label is muted: dimming the message too
+/// would make a warning easy to skim past, and warnings should still be read.
+fn warn_deprecated(flag: &str) {
+    let message = format!(
+        "`{flag}` is deprecated and will be removed in a future version; use {} instead",
+        cli::PREFERRED_FLAG
+    );
+    let mut stderr = io::stderr();
+    if wait::color_enabled() {
+        let _ = queue!(
+            stderr,
+            SetForegroundColor(Color::DarkGrey),
+            Print("cmg: warning:"),
+            ResetColor,
+            Print(" "),
+            Print(&message),
+            Print("\n")
+        );
+    } else {
+        let _ = writeln!(stderr, "cmg: warning: {message}");
+    }
+    let _ = stderr.flush();
 }
 
 fn run(cli: &Cli) -> Result<()> {
